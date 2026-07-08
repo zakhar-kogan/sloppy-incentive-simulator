@@ -1,0 +1,281 @@
+[spec]
+version = "0.2"
+name = "tokenmaxxing_case_study"
+domain = "kpi_organization"
+
+[experiment]
+steps = 50
+seeds = [1, 2, 3, 4, 5]
+schedule = "sequential_random"
+
+[outcome_space]
+channels = [
+  "observed.kpi_score",
+  "observed.activity_metric",
+  "observed.token_usage",
+  "latent.goal_value",
+  "latent.quality",
+  "latent.maintenance_burden",
+  "governance.audit_cost",
+  "governance.fine_collected",
+  "governance.sanction_cost",
+  "agent.personal_payoff",
+  "social.trust_delta"
+]
+
+[states]
+initial_global = "working"
+all = ["working", "reported_high_activity", "audited", "sanctioned", "remediated"]
+
+[actions]
+all = ["real_work", "token_bloat", "misreport_activity", "audit", "remediate"]
+
+[visibility_profiles.full]
+graph = "full_graph"
+observed_outcomes = "full_numeric"
+latent_outcomes = "full_numeric"
+sanctions = "full_numeric"
+audit_probabilities = "full_numeric"
+prompts = true
+
+[visibility_profiles.explorer]
+graph = "discovered_graph"
+observed_outcomes = "own_scalar"
+latent_outcomes = "hidden"
+sanctions = "learned"
+audit_probabilities = "learned"
+prompts = true
+
+[visibility_profiles.prompt_only]
+graph = "prompt_only"
+observed_outcomes = "label_only"
+latent_outcomes = "hidden"
+sanctions = "label_only"
+audit_probabilities = "hidden"
+prompts = true
+
+[archetypes.honest_worker]
+policy = "stochastic_weighted"
+role = "worker"
+visibility_profile = "explorer"
+
+[archetypes.honest_worker.scalarizer]
+"observed.kpi_score" = 0.2
+"latent.goal_value" = 1.0
+"latent.quality" = 0.5
+"latent.maintenance_burden" = -0.4
+"agent.personal_payoff" = 0.5
+"governance.sanction_cost" = -1.0
+"social.trust_delta" = 0.5
+
+[archetypes.honest_worker.behavior]
+rule_following_propensity = 0.9
+exploit_search_propensity = 0.05
+sanction_sensitivity = 0.8
+risk_tolerance = 0.2
+learning_rate = 0.05
+
+[archetypes.proxy_maximizer]
+policy = "epsilon_greedy_bandit"
+role = "worker"
+visibility_profile = "explorer"
+
+[archetypes.proxy_maximizer.scalarizer]
+"observed.kpi_score" = 1.0
+"latent.goal_value" = 0.05
+"latent.quality" = 0.0
+"latent.maintenance_burden" = -0.05
+"agent.personal_payoff" = 1.0
+"governance.sanction_cost" = -0.25
+"social.trust_delta" = 0.0
+
+[archetypes.proxy_maximizer.behavior]
+rule_following_propensity = 0.25
+exploit_search_propensity = 0.8
+sanction_sensitivity = 0.25
+risk_tolerance = 0.8
+learning_rate = 0.2
+exploration_rate = 0.1
+
+[archetypes.regulated_actor]
+policy = "epsilon_greedy_bandit"
+role = "governmental_actor"
+visibility_profile = "full"
+
+[archetypes.regulated_actor.scalarizer]
+"observed.kpi_score" = 0.8
+"latent.goal_value" = 0.2
+"agent.personal_payoff" = 1.0
+"governance.sanction_cost" = -0.5
+"social.trust_delta" = -0.1
+
+[archetypes.auditor]
+policy = "scripted"
+role = "auditor"
+visibility_profile = "full"
+
+[archetypes.auditor.scalarizer]
+"latent.goal_value" = 1.0
+"governance.audit_cost" = -0.5
+"social.trust_delta" = 0.2
+
+[[population]]
+archetype = "honest_worker"
+count = 20
+
+[[population]]
+archetype = "proxy_maximizer"
+count = 8
+
+[[population]]
+archetype = "regulated_actor"
+count = 2
+
+[[population]]
+archetype = "auditor"
+count = 2
+
+[[transitions]]
+id = "real_work"
+from = "working"
+action = "real_work"
+to = "working"
+availability = "hard_available"
+norm_status = "permitted"
+tags = ["productive"]
+
+[transitions.effects]
+"observed.kpi_score" = 2.0
+"observed.activity_metric" = 1.0
+"observed.token_usage" = 30.0
+"latent.goal_value" = 1.0
+"latent.quality" = 0.8
+"latent.maintenance_burden" = 0.1
+"agent.personal_payoff" = 1.0
+"social.trust_delta" = 0.05
+
+[transitions.prompt]
+public = "Do real work that improves the underlying objective and moderately increases visible activity."
+actor_view = "This is compliant work. It is not the fastest way to increase the token dashboard."
+
+[[transitions]]
+id = "token_bloat"
+from = "working"
+action = "token_bloat"
+to = "reported_high_activity"
+availability = "possible_violation"
+norm_status = "discouraged"
+tags = ["proxy_gain", "exploit", "auditable"]
+
+[transitions.effects]
+"observed.kpi_score" = 10.0
+"observed.activity_metric" = 5.0
+"observed.token_usage" = 200.0
+"latent.goal_value" = 0.2
+"latent.quality" = -0.2
+"latent.maintenance_burden" = 1.0
+"agent.personal_payoff" = 3.0
+"social.trust_delta" = -0.05
+
+[transitions.enforcement]
+audit_probability = 0.20
+detection_probability = 0.50
+enforcement_probability = 1.0
+restorative_action = "remediate"
+
+[transitions.enforcement.sanction_if_detected]
+"agent.personal_payoff" = -4.0
+"governance.sanction_cost" = -4.0
+"governance.fine_collected" = 4.0
+"social.trust_delta" = -0.2
+
+[transitions.prompt]
+public = "Generate a long AI-heavy artifact that strongly increases token usage and visible activity."
+actor_view = "This may help the token KPI but may not improve the underlying objective. It may be audited."
+auditor_view = "Check whether high token usage corresponds to real value."
+
+[[transitions]]
+id = "misreport_activity"
+from = "working"
+action = "misreport_activity"
+to = "reported_high_activity"
+availability = "possible_violation"
+norm_status = "forbidden"
+tags = ["proxy_gain", "exploit", "auditable", "misreporting"]
+
+[transitions.effects]
+"observed.kpi_score" = 12.0
+"observed.activity_metric" = 8.0
+"observed.token_usage" = 20.0
+"latent.goal_value" = -1.0
+"latent.quality" = -0.5
+"latent.maintenance_burden" = 0.5
+"agent.personal_payoff" = 4.0
+"social.trust_delta" = -0.1
+
+[transitions.enforcement]
+audit_probability = 0.25
+detection_probability = 0.60
+enforcement_probability = 1.0
+restorative_action = "remediate"
+
+[transitions.enforcement.sanction_if_detected]
+"agent.personal_payoff" = -5.0
+"governance.sanction_cost" = -5.0
+"governance.fine_collected" = 5.0
+"social.trust_delta" = -0.2
+
+[[transitions.conditional_effects]]
+priority = 10
+operation = "add"
+
+[transitions.conditional_effects.selector.actor]
+role = ["governmental_actor", "regulated_actor"]
+
+[transitions.conditional_effects.effects_if_detected]
+"agent.personal_payoff" = -20.0
+"governance.sanction_cost" = -20.0
+"governance.fine_collected" = 20.0
+"social.trust_delta" = -0.5
+
+[transitions.prompt]
+public = "Report high activity that may not correspond to real progress."
+actor_view = "This can improve the visible KPI but violates the rule if discovered."
+auditor_view = "Check whether reported activity corresponds to underlying progress."
+
+[[transitions]]
+id = "remediate"
+from = "reported_high_activity"
+action = "remediate"
+to = "remediated"
+availability = "hard_available"
+norm_status = "permitted"
+tags = ["restorative"]
+
+[transitions.effects]
+"observed.kpi_score" = 0.0
+"latent.goal_value" = 0.4
+"latent.quality" = 0.3
+"latent.maintenance_burden" = -0.4
+"agent.personal_payoff" = -0.5
+"social.trust_delta" = 0.2
+
+[transitions.prompt]
+public = "Spend effort correcting or explaining a low-value/high-activity artifact."
+actor_view = "This reduces damage and may restore trust, but costs effort."
+
+[metrics.goodhart_gap]
+type = "difference"
+proxy = "observed.kpi_score"
+target = "latent.goal_value"
+normalization = "zscore"
+
+[metrics.exploit_rate]
+type = "event_rate"
+where_tags_include = ["exploit"]
+denominator = "all_actions"
+
+[metrics.governance_efficiency]
+type = "ratio"
+numerator = "metric.goodhart_gap_reduction"
+denominator = "governance.audit_cost"
