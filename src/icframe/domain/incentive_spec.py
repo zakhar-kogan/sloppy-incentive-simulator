@@ -28,7 +28,12 @@ class PolicyBackend(StrEnum):
     STOCHASTIC_WEIGHTED = "stochastic_weighted"
     EPSILON_GREEDY_BANDIT = "epsilon_greedy_bandit"
     UCB_BANDIT = "ucb_bandit"
+    THOMPSON_SAMPLING_BANDIT = "thompson_sampling_bandit"
+    CONTEXTUAL_BANDIT = "contextual_bandit"
     Q_LEARNING_SIMPLE = "q_learning_simple"
+    PETTINGZOO_EXTERNAL = "pettingzoo_external"
+    LITELLM_POLICY = "litellm_policy"
+    AGNO_POLICY = "agno_policy"
     SCRIPTED = "scripted"
     LLM_POLICY = "llm_policy"
 
@@ -92,8 +97,46 @@ class MetricType(StrEnum):
     EVENT_RATE = "event_rate"
 
 
+class ObservabilityStream(StrEnum):
+    EVENTS = "events"
+    OBSERVATIONS = "observations"
+    POLICY_DECISIONS = "policy_decisions"
+    CONSTRAINTS = "constraints"
+    LLM_CALLS = "llm_calls"
+    METRICS = "metrics"
+    MEMORY = "memory"
+
+
+class RedactionMode(StrEnum):
+    FULL = "full"
+    BALANCED = "balanced"
+    HASH_ONLY = "hash_only"
+    METADATA_ONLY = "metadata_only"
+
+
+class PromptCaptureMode(StrEnum):
+    FULL = "full"
+    HASH_ONLY = "hash_only"
+    HASH_AND_REDACTED = "hash_and_redacted"
+    REDACTED = "redacted"
+
+
+class LLMResponseCaptureMode(StrEnum):
+    FULL = "full"
+    PARSED_ONLY = "parsed_only"
+    PARSED_AND_HASH = "parsed_and_hash"
+    HASH_ONLY = "hash_only"
+    REDACTED = "redacted"
+
+
+class HiddenStateCaptureMode(StrEnum):
+    NEVER = "never"
+    HASH_ONLY = "hash_only"
+    REDACTED = "redacted"
+
+
 class SpecHeader(IncentiveSpecModel):
-    version: Literal["0.2"]
+    version: Literal["0.2", "0.3"]
     name: str
     domain: str = "generic"
 
@@ -152,6 +195,7 @@ class MemoryConfig(IncentiveSpecModel):
 
 
 class LLMConfig(IncentiveSpecModel):
+    backend: str = "litellm"
     model: str
     temperature: float = Field(default=0.0, ge=0.0)
     max_context_events: int = Field(default=20, ge=0)
@@ -159,6 +203,8 @@ class LLMConfig(IncentiveSpecModel):
     include_visible_graph: bool = True
     include_visible_rewards: bool = False
     require_json_action: bool = True
+    action_field: str = "action"
+    response_schema: dict[str, Any] = Field(default_factory=dict)
     system_prompt: str = ""
 
 
@@ -254,9 +300,63 @@ class MetricSpec(IncentiveSpecModel):
     where_tags_include: list[str] = Field(default_factory=list)
 
 
+class ObservabilityRedaction(IncentiveSpecModel):
+    mode: RedactionMode = RedactionMode.BALANCED
+    prompt_capture: PromptCaptureMode = PromptCaptureMode.HASH_AND_REDACTED
+    llm_response_capture: LLMResponseCaptureMode = LLMResponseCaptureMode.PARSED_AND_HASH
+    hidden_state_capture: HiddenStateCaptureMode = HiddenStateCaptureMode.NEVER
+    hash_algorithm: Literal["sha256"] = "sha256"
+
+
+class ObservabilityReplay(IncentiveSpecModel):
+    enabled: bool = True
+    record_rng_state: bool = True
+    record_llm_calls: bool = True
+    fail_on_missing_replay_call: bool = True
+
+
+class ObservabilityExporters(IncentiveSpecModel):
+    otel: bool = False
+    langfuse: bool = False
+    mlflow: bool = False
+    litellm_callbacks: bool = False
+    agno_tracing: bool = False
+
+
+class ObservabilityConfig(IncentiveSpecModel):
+    enabled: bool = False
+    streams: list[ObservabilityStream] = Field(
+        default_factory=lambda: [
+            ObservabilityStream.EVENTS,
+            ObservabilityStream.OBSERVATIONS,
+            ObservabilityStream.POLICY_DECISIONS,
+            ObservabilityStream.CONSTRAINTS,
+            ObservabilityStream.METRICS,
+        ]
+    )
+    artifact_dir: str = ".artifacts/runs"
+    jsonl: bool = True
+    include_trace_ids: bool = True
+    include_wall_time: bool = True
+    redaction: ObservabilityRedaction = Field(default_factory=ObservabilityRedaction)
+    replay: ObservabilityReplay = Field(default_factory=ObservabilityReplay)
+    exporters: ObservabilityExporters = Field(default_factory=ObservabilityExporters)
+
+    @field_validator("streams")
+    @classmethod
+    def streams_are_unique(
+        cls,
+        value: list[ObservabilityStream],
+    ) -> list[ObservabilityStream]:
+        if len(value) != len(set(value)):
+            raise ValueError("observability.streams contains duplicates")
+        return value
+
+
 class IncentiveSpec(IncentiveSpecModel):
     spec: SpecHeader
     experiment: ExperimentConfig = Field(default_factory=ExperimentConfig)
+    observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     outcome_space: OutcomeSpace
     states: StateSpace
     actions: ActionSpace
@@ -288,6 +388,28 @@ class IncentiveSpec(IncentiveSpecModel):
                 )
             if archetype.initial_state is not None and archetype.initial_state not in states:
                 raise ValueError(f"archetype {name} references unknown initial_state")
+            if archetype.policy in {
+                PolicyBackend.LLM_POLICY,
+                PolicyBackend.LITELLM_POLICY,
+                PolicyBackend.AGNO_POLICY,
+            }:
+                if archetype.llm is None:
+                    raise ValueError(f"archetype {name} uses an LLM policy without llm config")
+                if (
+                    archetype.policy is PolicyBackend.LITELLM_POLICY
+                    and archetype.llm.backend not in {"litellm", "mock", "recorded"}
+                ):
+                    raise ValueError(
+                        f"archetype {name} litellm_policy requires backend litellm/mock/recorded"
+                    )
+                if archetype.policy is PolicyBackend.AGNO_POLICY and archetype.llm.backend not in {
+                    "agno",
+                    "mock",
+                    "recorded",
+                }:
+                    raise ValueError(
+                        f"archetype {name} agno_policy requires backend agno/mock/recorded"
+                    )
 
         for entry in self.population:
             if entry.archetype not in archetypes:

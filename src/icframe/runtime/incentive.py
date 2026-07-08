@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import random
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -23,6 +24,8 @@ from icframe.domain.incentive_spec import (
     ScheduleMode,
     Transition,
 )
+from icframe.llm import LLMCallRecord, LLMClient, LLMRequest, llm_call_record_from_response
+from icframe.observability import stable_trace_id
 
 
 class AgentRuntimeState(ICFrameModel):
@@ -39,6 +42,10 @@ class AgentRuntimeState(ICFrameModel):
 
 
 class Observation(ICFrameModel):
+    run_id: str | None = None
+    trace_id: str | None = None
+    step: int | None = None
+    observation_id: str | None = None
     agent_id: str
     state: str
     visible_actions: list[str] = Field(default_factory=list)
@@ -48,8 +55,33 @@ class Observation(ICFrameModel):
     memory: dict[str, Any] = Field(default_factory=dict)
 
 
+class PolicyDecision(ICFrameModel):
+    run_id: str
+    trace_id: str
+    step: int
+    observation_id: str
+    policy_decision_id: str
+    agent_id: str
+    policy_backend: PolicyBackend
+    candidate_actions: list[str] = Field(default_factory=list)
+    chosen_action: str | None = None
+    target_id: str | None = None
+    estimated_scalar_rewards: dict[str, float] = Field(default_factory=dict)
+    decision_probability: float | None = None
+    rationale: str | None = None
+    llm_call_id: str | None = None
+    failure_mode: str | None = None
+    policy_state_delta: dict[str, Any] = Field(default_factory=dict)
+
+
 class SimulationEvent(ICFrameModel):
     run_id: str
+    trace_id: str
+    event_id: str
+    observation_id: str
+    policy_decision_id: str
+    constraint_id: str | None = None
+    llm_call_id: str | None = None
     seed: int
     step: int
     actor_id: str
@@ -69,13 +101,18 @@ class SimulationEvent(ICFrameModel):
     final_outcome_vector: OutcomeVector = Field(default_factory=dict)
     scalar_rewards: dict[str, float] = Field(default_factory=dict)
     constraint_explanation: ConstraintExplanation | None = None
+    artifact_refs: dict[str, str] = Field(default_factory=dict)
 
 
 class SimulationTrace(ICFrameModel):
     run_id: str
+    trace_id: str
     spec_name: str
     seed: int
     events: list[SimulationEvent] = Field(default_factory=list)
+    observations: list[Observation] = Field(default_factory=list)
+    policy_decisions: list[PolicyDecision] = Field(default_factory=list)
+    llm_calls: list[LLMCallRecord] = Field(default_factory=list)
     final_global_state: dict[str, Scalar] = Field(default_factory=dict)
     final_agent_state: dict[str, AgentRuntimeState] = Field(default_factory=dict)
     metric_results: dict[str, float] = Field(default_factory=dict)
@@ -88,28 +125,62 @@ class _RuntimeWorld:
     seed: int
     run_id: str
     agents: dict[str, AgentRuntimeState]
+    trace_id: str = "trace_local"
     global_state: dict[str, Scalar] = field(default_factory=dict)
     learned_values: dict[str, dict[str, float]] = field(default_factory=lambda: defaultdict(dict))
 
 
-def run_incentive_simulation(spec: IncentiveSpec, seed: int | None = None) -> SimulationTrace:
+def run_incentive_simulation(
+    spec: IncentiveSpec,
+    seed: int | None = None,
+    observer: Any | None = None,
+    llm_client: LLMClient | None = None,
+) -> SimulationTrace:
     run_seed = (
         seed if seed is not None else (spec.experiment.seeds[0] if spec.experiment.seeds else 0)
     )
+    run_id = f"{spec.spec.name}:{run_seed}"
     world = _RuntimeWorld(
         spec=spec,
         rng=random.Random(run_seed),
         seed=run_seed,
-        run_id=f"{spec.spec.name}:{run_seed}",
+        run_id=run_id,
+        trace_id=stable_trace_id(run_id),
         agents=_expand_population(spec),
         global_state={"round": 0},
     )
     events: list[SimulationEvent] = []
+    observations: list[Observation] = []
+    decisions: list[PolicyDecision] = []
+    llm_calls: list[LLMCallRecord] = []
+    if observer is not None:
+        observer.start_run(spec, run_id=world.run_id, trace_id=world.trace_id, seed=run_seed)
     for step in range(1, spec.experiment.steps + 1):
         world.global_state["round"] = step
-        for agent in _scheduled_agents(world, step):
-            observation = compile_observation(spec, world, agent)
-            transition = _choose_transition(world, agent, observation)
+        for turn_index, agent in enumerate(_scheduled_agents(world, step), start=1):
+            observation = compile_observation(
+                spec,
+                world,
+                agent,
+                step=step,
+                turn_index=turn_index,
+            )
+            observations.append(observation)
+            if observer is not None:
+                observer.record_observation(observation)
+            transition, decision, llm_call = _choose_transition(
+                world,
+                agent,
+                observation,
+                llm_client=llm_client,
+            )
+            decisions.append(decision)
+            if observer is not None:
+                observer.record_policy_decision(decision)
+            if llm_call is not None:
+                llm_calls.append(llm_call)
+                if observer is not None:
+                    observer.record_llm_call(llm_call)
             if transition is None:
                 continue
             explanation = explain_transition_availability(
@@ -117,26 +188,52 @@ def run_incentive_simulation(spec: IncentiveSpec, seed: int | None = None) -> Si
                 actor_id=agent.id,
                 state=agent.current_state,
                 action=transition.action,
+                constraint_id=_constraint_id(step, turn_index),
+                policy_decision_id=decision.policy_decision_id,
             )
+            if observer is not None:
+                observer.record_constraint_explanation(explanation)
             if not explanation.available:
                 continue
-            events.append(_execute_transition(world, agent, transition, step, explanation))
+            event = _execute_transition(
+                world,
+                agent,
+                transition,
+                step,
+                explanation,
+                observation,
+                decision,
+                turn_index,
+            )
+            events.append(event)
+            if observer is not None:
+                observer.record_event(event)
     metric_results = compute_metrics(spec, events)
-    return SimulationTrace(
+    trace = SimulationTrace(
         run_id=world.run_id,
+        trace_id=world.trace_id,
         spec_name=spec.spec.name,
         seed=run_seed,
         events=events,
+        observations=observations,
+        policy_decisions=decisions,
+        llm_calls=llm_calls,
         final_global_state=world.global_state,
         final_agent_state=world.agents,
         metric_results=metric_results,
     )
+    if observer is not None:
+        observer.finish_run(trace)
+    return trace
 
 
 def compile_observation(
     spec: IncentiveSpec,
     world: _RuntimeWorld,
     agent: AgentRuntimeState,
+    *,
+    step: int | None = None,
+    turn_index: int = 0,
 ) -> Observation:
     profile = spec.visibility_profiles[agent.visibility_profile]
     candidates = [
@@ -172,6 +269,10 @@ def compile_observation(
             visible_prompts[transition.id] = transition.prompt.public
 
     return Observation(
+        run_id=world.run_id,
+        trace_id=world.trace_id,
+        step=step,
+        observation_id=(_observation_id(step, turn_index, agent.id) if step is not None else None),
         agent_id=agent.id,
         state=agent.current_state,
         visible_actions=visible_actions,
@@ -179,6 +280,58 @@ def compile_observation(
         visible_outcomes=visible_outcomes,
         visible_prompts=visible_prompts,
         memory=agent.memory,
+    )
+
+
+def choose_action(
+    policy: PolicyBackend,
+    observation: Observation,
+    action_space: list[str],
+    memory: dict[str, Any],
+    rng: random.Random,
+    *,
+    estimated_scalar_rewards: dict[str, float] | None = None,
+    behavior: dict[str, float] | None = None,
+) -> PolicyDecision:
+    """Choose an action over visible action labels and return an auditable decision."""
+
+    estimated = estimated_scalar_rewards or {action: 0.0 for action in action_space}
+    behavior = behavior or {}
+    chosen_action: str | None = None
+    probability: float | None = None
+
+    if action_space:
+        if policy is PolicyBackend.EPSILON_GREEDY_BANDIT:
+            exploration_rate = behavior.get("exploration_rate", 0.1)
+            if rng.random() < exploration_rate:
+                chosen_action = rng.choice(action_space)
+                probability = exploration_rate / len(action_space)
+            else:
+                chosen_action = max(action_space, key=lambda action: (estimated[action], action))
+                probability = 1.0 - exploration_rate
+        elif policy in {
+            PolicyBackend.STOCHASTIC_WEIGHTED,
+            PolicyBackend.THOMPSON_SAMPLING_BANDIT,
+            PolicyBackend.CONTEXTUAL_BANDIT,
+            PolicyBackend.UCB_BANDIT,
+        }:
+            chosen_action = _weighted_action_choice(rng, action_space, estimated)
+        else:
+            chosen_action = max(action_space, key=lambda action: (estimated[action], action))
+
+    return PolicyDecision(
+        run_id=observation.run_id or "run_unknown",
+        trace_id=observation.trace_id or "trace_unknown",
+        step=observation.step or 0,
+        observation_id=observation.observation_id or "observation_unknown",
+        policy_decision_id=_decision_id(observation.step or 0, 0, observation.agent_id),
+        agent_id=observation.agent_id,
+        policy_backend=policy,
+        candidate_actions=action_space,
+        chosen_action=chosen_action,
+        estimated_scalar_rewards=estimated,
+        decision_probability=probability,
+        policy_state_delta={},
     )
 
 
@@ -260,25 +413,79 @@ def _choose_transition(
     world: _RuntimeWorld,
     agent: AgentRuntimeState,
     observation: Observation,
-) -> Transition | None:
+    *,
+    llm_client: LLMClient | None = None,
+) -> tuple[Transition | None, PolicyDecision, LLMCallRecord | None]:
     candidates = [
         transition
         for transition in world.spec.transitions
         if transition.from_state == agent.current_state
         and transition.availability is not Availability.HARD_BLOCKED
     ]
+    estimated = {
+        transition.action: _expected_scalar_reward(agent, transition) for transition in candidates
+    }
+    decision = PolicyDecision(
+        run_id=world.run_id,
+        trace_id=world.trace_id,
+        step=observation.step or 0,
+        observation_id=observation.observation_id or "observation_unknown",
+        policy_decision_id=_decision_id(
+            observation.step or 0,
+            _turn_index_from_observation(observation),
+            agent.id,
+        ),
+        agent_id=agent.id,
+        policy_backend=agent.policy,
+        candidate_actions=[transition.action for transition in candidates],
+        estimated_scalar_rewards=estimated,
+    )
     if not candidates:
-        return None
+        decision.failure_mode = "no_available_candidates"
+        return None, decision, None
+    if agent.policy in {
+        PolicyBackend.LLM_POLICY,
+        PolicyBackend.LITELLM_POLICY,
+        PolicyBackend.AGNO_POLICY,
+    }:
+        return _choose_transition_with_llm(
+            world,
+            agent,
+            observation,
+            candidates,
+            decision,
+            llm_client,
+        )
     if agent.policy is PolicyBackend.SCRIPTED:
-        return _prefer_permitted(candidates)
+        transition = _prefer_permitted(candidates)
+        decision.chosen_action = transition.action
+        decision.decision_probability = 1.0
+        decision.rationale = "prefer_permitted"
+        return transition, decision, None
     if agent.policy is PolicyBackend.EPSILON_GREEDY_BANDIT:
         exploration_rate = agent.behavior.get("exploration_rate", 0.1)
         if world.rng.random() < exploration_rate:
-            return world.rng.choice(candidates)
+            transition = world.rng.choice(candidates)
+            decision.chosen_action = transition.action
+            decision.decision_probability = exploration_rate / len(candidates)
+            decision.rationale = "epsilon_explore"
+            return transition, decision, None
     scored = [(transition, _expected_scalar_reward(agent, transition)) for transition in candidates]
-    if agent.policy is PolicyBackend.STOCHASTIC_WEIGHTED:
-        return _weighted_choice(world.rng, scored)
-    return max(scored, key=lambda item: (item[1], item[0].id))[0]
+    if agent.policy in {
+        PolicyBackend.STOCHASTIC_WEIGHTED,
+        PolicyBackend.THOMPSON_SAMPLING_BANDIT,
+        PolicyBackend.CONTEXTUAL_BANDIT,
+        PolicyBackend.UCB_BANDIT,
+    }:
+        transition = _weighted_choice(world.rng, scored)
+        decision.chosen_action = transition.action
+        decision.rationale = agent.policy.value
+        return transition, decision, None
+    transition = max(scored, key=lambda item: (item[1], item[0].id))[0]
+    decision.chosen_action = transition.action
+    decision.decision_probability = 1.0 - agent.behavior.get("exploration_rate", 0.0)
+    decision.rationale = "max_expected_scalar_reward"
+    return transition, decision, None
 
 
 def _execute_transition(
@@ -287,6 +494,9 @@ def _execute_transition(
     transition: Transition,
     step: int,
     explanation: ConstraintExplanation,
+    observation: Observation,
+    decision: PolicyDecision,
+    turn_index: int,
 ) -> SimulationEvent:
     from_state = agent.current_state
     outcome = dict(transition.effects)
@@ -344,8 +554,16 @@ def _execute_transition(
     agent.memory["known_transitions"] = tuple(sorted(known))
     scalar_reward = _scalarize(agent.scalarizer, outcome)
     world.learned_values[agent.id][transition.id] = scalar_reward
+    event_id = _event_id(step, turn_index, agent.id)
+    explanation.event_id = event_id
     return SimulationEvent(
         run_id=world.run_id,
+        trace_id=world.trace_id,
+        event_id=event_id,
+        observation_id=observation.observation_id or "observation_unknown",
+        policy_decision_id=decision.policy_decision_id,
+        constraint_id=explanation.constraint_id,
+        llm_call_id=decision.llm_call_id,
         seed=world.seed,
         step=step,
         actor_id=agent.id,
@@ -365,7 +583,106 @@ def _execute_transition(
         final_outcome_vector=outcome,
         scalar_rewards={agent.id: scalar_reward},
         constraint_explanation=explanation,
+        artifact_refs={
+            "observation": f"observations.jsonl:{observation.observation_id}",
+            "policy_decision": f"policy_decisions.jsonl:{decision.policy_decision_id}",
+            "constraint_explanation": f"constraint_explanations.jsonl:{explanation.constraint_id}",
+        },
     )
+
+
+def _choose_transition_with_llm(
+    world: _RuntimeWorld,
+    agent: AgentRuntimeState,
+    observation: Observation,
+    candidates: list[Transition],
+    decision: PolicyDecision,
+    llm_client: LLMClient | None,
+) -> tuple[Transition | None, PolicyDecision, LLMCallRecord | None]:
+    if llm_client is None:
+        transition = _prefer_permitted(candidates)
+        decision.chosen_action = transition.action
+        decision.failure_mode = "missing_llm_client_fallback"
+        decision.rationale = "fallback_prefer_permitted"
+        return transition, decision, None
+
+    archetype = world.spec.archetypes[agent.archetype]
+    llm_config = archetype.llm
+    if llm_config is None:
+        transition = _prefer_permitted(candidates)
+        decision.chosen_action = transition.action
+        decision.failure_mode = "missing_llm_config_fallback"
+        decision.rationale = "fallback_prefer_permitted"
+        return transition, decision, None
+
+    llm_call_id = f"llm_{decision.policy_decision_id}"
+    decision.llm_call_id = llm_call_id
+    request = LLMRequest(
+        llm_call_id=llm_call_id,
+        policy_decision_id=decision.policy_decision_id,
+        provider=llm_config.backend,
+        model=llm_config.model,
+        system_prompt=llm_config.system_prompt,
+        prompt=_prompt_from_observation(observation, candidates),
+        response_schema=llm_config.response_schema,
+        temperature=llm_config.temperature,
+        require_json=llm_config.require_json_action,
+    )
+    try:
+        response = llm_client.complete(request)
+        action = response.parsed.get(llm_config.action_field)
+        if not isinstance(action, str):
+            decision.failure_mode = "malformed_llm_output"
+            transition = None
+        else:
+            transition = next(
+                (candidate for candidate in candidates if candidate.action == action),
+                None,
+            )
+            if transition is None:
+                decision.failure_mode = "llm_chose_invalid_action"
+            decision.chosen_action = action
+            rationale = response.parsed.get("rationale")
+            if isinstance(rationale, str):
+                decision.rationale = rationale
+    except Exception as exc:
+        response = None
+        transition = None
+        decision.failure_mode = f"llm_error:{type(exc).__name__}"
+
+    if response is None:
+        llm_record = LLMCallRecord(
+            llm_call_id=llm_call_id,
+            policy_decision_id=decision.policy_decision_id,
+            provider=llm_config.backend,
+            model=llm_config.model,
+            request_hash=request.request_hash,
+            response_hash="",
+            error_type=decision.failure_mode,
+            redaction_mode=world.spec.observability.redaction.mode.value,
+        )
+    else:
+        llm_record = llm_call_record_from_response(
+            request,
+            response,
+            redaction_mode=world.spec.observability.redaction.mode.value,
+        )
+    return transition, decision, llm_record
+
+
+def _prompt_from_observation(
+    observation: Observation,
+    candidates: list[Transition],
+) -> str:
+    payload = {
+        "state": observation.state,
+        "visible_actions": observation.visible_actions,
+        "visible_transitions": observation.visible_transitions,
+        "visible_outcomes": observation.visible_outcomes,
+        "visible_prompts": observation.visible_prompts,
+        "candidate_actions": [candidate.action for candidate in candidates],
+    }
+    return json.dumps(payload, sort_keys=True)
 
 
 def _visible_outcome_vector(profile, outcome: OutcomeVector) -> OutcomeVector:
@@ -435,6 +752,26 @@ def _weighted_choice(rng: random.Random, scored: list[tuple[Transition, float]])
     return scored[-1][0]
 
 
+def _weighted_action_choice(
+    rng: random.Random,
+    actions: list[str],
+    estimated: dict[str, float],
+) -> str:
+    scored = [(action, estimated[action]) for action in actions]
+    minimum = min(score for _, score in scored)
+    weights = [(score - minimum + 0.001) for _, score in scored]
+    total = sum(weights)
+    if total <= 0:
+        return rng.choice(actions)
+    sample = rng.random() * total
+    cursor = 0.0
+    for (action, _), weight in zip(scored, weights, strict=True):
+        cursor += weight
+        if sample <= cursor:
+            return action
+    return actions[-1]
+
+
 def _selector_matches(agent: AgentRuntimeState, conditional: ConditionalEffect) -> bool:
     selector = conditional.selector.actor
     if selector is None:
@@ -497,3 +834,31 @@ def _matching_event_count(events: list[SimulationEvent], tags: list[str]) -> int
         return len(events)
     required = set(tags)
     return sum(1 for event in events if required.issubset(event.tags))
+
+
+def _observation_id(step: int | None, turn_index: int, agent_id: str) -> str:
+    return f"obs_{step or 0:04d}_{turn_index:04d}_{agent_id}"
+
+
+def _decision_id(step: int, turn_index: int, agent_id: str) -> str:
+    return f"decision_{step:04d}_{turn_index:04d}_{agent_id}"
+
+
+def _constraint_id(step: int, turn_index: int) -> str:
+    return f"constraint_{step:04d}_{turn_index:04d}"
+
+
+def _event_id(step: int, turn_index: int, agent_id: str) -> str:
+    return f"event_{step:04d}_{turn_index:04d}_{agent_id}"
+
+
+def _turn_index_from_observation(observation: Observation) -> int:
+    if observation.observation_id is None:
+        return 0
+    parts = observation.observation_id.split("_")
+    if len(parts) < 3:
+        return 0
+    try:
+        return int(parts[2])
+    except ValueError:
+        return 0
