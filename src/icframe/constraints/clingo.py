@@ -21,14 +21,22 @@ class ConstraintReport(ICFrameModel):
 
 
 class ConstraintExplanation(ICFrameModel):
+    constraint_id: str | None = None
+    policy_decision_id: str | None = None
+    event_id: str | None = None
     actor_id: str
     state: str
     action: str
     transition_id: str | None = None
     available: bool = False
     hard_blocked: bool = False
+    blocked: bool = False
     norm_status: NormStatus = NormStatus.UNKNOWN
     reasons: list[str] = Field(default_factory=list)
+    obligations: list[str] = Field(default_factory=list)
+    violations: list[str] = Field(default_factory=list)
+    remediation_actions: list[str] = Field(default_factory=list)
+    explanation_facts: list[str] = Field(default_factory=list)
 
 
 def validate_constraints(spec: IncentiveSpec) -> ConstraintReport:
@@ -66,6 +74,8 @@ def explain_transition_availability(
     actor_id: str,
     state: str,
     action: str,
+    constraint_id: str | None = None,
+    policy_decision_id: str | None = None,
 ) -> ConstraintExplanation:
     facts = [
         *_facts_for_spec(spec),
@@ -86,12 +96,20 @@ def explain_transition_availability(
             'reason(T,"hard_blocked") :- blocked(T).',
             'reason(T,"norm_permitted") :- candidate(T), norm_status(T,"permitted").',
             'reason(T,"norm_forbidden") :- candidate(T), norm_status(T,"forbidden").',
+            'reason(T,"norm_obligatory") :- candidate(T), norm_status(T,"obligatory").',
             'reason(T,"norm_discouraged") :- candidate(T), norm_status(T,"discouraged").',
+            'violation(T,"forbidden_action") :- candidate(T), norm_status(T,"forbidden").',
+            'obligation(T,A) :- candidate(T), norm_status(T,"obligatory"), transition(T,_,A,_).',
+            "remediation(T,R) :- candidate(T), restorative_action(T,R).",
+            'reason(T,"remediation_available") :- remediation(T,_).',
             "#show candidate/1.",
             "#show available/1.",
             "#show blocked/1.",
             "#show norm_status/2.",
             "#show reason/2.",
+            "#show violation/2.",
+            "#show obligation/2.",
+            "#show remediation/2.",
         ]
     )
     symbols = _solve(program)
@@ -101,22 +119,38 @@ def explain_transition_availability(
     hard_blocked = any(symbol.name == "blocked" for symbol in symbols)
     norm_status = NormStatus.UNKNOWN
     reasons = []
+    violations = []
+    obligations = []
+    remediation_actions = []
     for symbol in symbols:
         if symbol.name == "norm_status" and transition_id == _string_arg(symbol, 0):
             norm_status = NormStatus(_string_arg(symbol, 1))
         if symbol.name == "reason" and transition_id == _string_arg(symbol, 0):
             reasons.append(_string_arg(symbol, 1))
+        if symbol.name == "violation" and transition_id == _string_arg(symbol, 0):
+            violations.append(_string_arg(symbol, 1))
+        if symbol.name == "obligation" and transition_id == _string_arg(symbol, 0):
+            obligations.append(_string_arg(symbol, 1))
+        if symbol.name == "remediation" and transition_id == _string_arg(symbol, 0):
+            remediation_actions.append(_string_arg(symbol, 1))
     if transition_id is None:
         reasons.append("no_transition_for_state_action")
     return ConstraintExplanation(
+        constraint_id=constraint_id,
+        policy_decision_id=policy_decision_id,
         actor_id=actor_id,
         state=state,
         action=action,
         transition_id=transition_id,
         available=available,
         hard_blocked=hard_blocked,
+        blocked=hard_blocked,
         norm_status=norm_status,
         reasons=sorted(set(reasons)),
+        obligations=sorted(set(obligations)),
+        violations=sorted(set(violations)),
+        remediation_actions=sorted(set(remediation_actions)),
+        explanation_facts=sorted(set(reasons)),
     )
 
 
@@ -142,6 +176,11 @@ def _facts_for_transition(transition: Transition) -> list[str]:
     ]
     if transition.enforcement is not None:
         facts.append(f"has_enforcement({_q(transition.id)}).")
+        if transition.enforcement.restorative_action is not None:
+            facts.append(
+                f"restorative_action({_q(transition.id)},"
+                f"{_q(transition.enforcement.restorative_action)})."
+            )
     for tag in transition.tags:
         facts.append(f"tag({_q(transition.id)},{_q(tag)}).")
     return facts
