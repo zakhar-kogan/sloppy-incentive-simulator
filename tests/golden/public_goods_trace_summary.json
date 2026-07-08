@@ -1,0 +1,20 @@
+{
+  "final_balances": {
+    "alice": 13.5,
+    "bob": 14.15,
+    "cara": 12.75
+  },
+  "event_kinds": [
+    "withhold",
+    "contribute",
+    "signal",
+    "signal",
+    "withhold",
+    "contribute",
+    "contribute",
+    "contribute",
+    "withhold",
+    "contribute"
+  ],
+  "visible_score": 13.876898
+}

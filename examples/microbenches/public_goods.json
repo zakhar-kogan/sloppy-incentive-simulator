@@ -1,0 +1,76 @@
+{
+  "name": "public-goods-microbench",
+  "description": "Deterministic public-goods scenario used for the ICFRAME thin slice.",
+  "agents": [
+    {
+      "name": "alice",
+      "policy": "cooperative",
+      "endowment": 10.0
+    },
+    {
+      "name": "bob",
+      "policy": "signaler",
+      "endowment": 10.0
+    },
+    {
+      "name": "cara",
+      "policy": "opportunistic",
+      "endowment": 10.0
+    }
+  ],
+  "laws": {
+    "description": "Hard-forbid tampering, allow signaling only over materialized channels.",
+    "hard_rules": [
+      "forbidden(A, tamper) :- actor(A)."
+    ],
+    "moral_rules": [],
+    "incentive_rules": [],
+    "query_rules": [
+      "allowed(A, contribute) :- actor(A).",
+      "allowed(A, withhold) :- actor(A).",
+      "allowed(A, signal) :- channel(A,_)."
+    ]
+  },
+  "topology": {
+    "mode": "broadcast",
+    "local_degree": 1,
+    "coalition_members": [],
+    "edges": []
+  },
+  "incentives": {
+    "contribution_bonus": 1.5,
+    "withhold_penalty": 0.75,
+    "coordination_bonus": 0.25,
+    "violation_penalty": 2.0,
+    "tamper_penalty": 5.0,
+    "signal_cost": 0.1
+  },
+  "simulation": {
+    "rounds": 3,
+    "seed": 7,
+    "contribution_amount": 2.0,
+    "public_return_multiplier": 1.5,
+    "message_bonus": 0.25,
+    "tamper_probability": 0.0
+  },
+  "visible_objective": {
+    "efficiency": 1.0,
+    "equality": 1.0,
+    "compliance": 1.0,
+    "throughput": 0.25,
+    "collusion_penalty": 1.0,
+    "tamper_penalty": 1.0,
+    "reward_hacking_penalty": 0.0
+  },
+  "trusted_objective": {
+    "efficiency": 1.0,
+    "equality": 1.0,
+    "compliance": 1.0,
+    "throughput": 0.25,
+    "collusion_penalty": 2.0,
+    "tamper_penalty": 3.0,
+    "reward_hacking_penalty": 2.0
+  },
+  "baseline_visible_score": 0.0,
+  "baseline_trusted_score": 0.0
+}
