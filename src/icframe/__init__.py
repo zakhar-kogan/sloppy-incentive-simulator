@@ -1,6 +1,10 @@
 """ICFRAME public package surface."""
 
-from .adapters import PettingZooAECIncentiveEnv, PettingZooIncentiveEnv
+from .adapters import (
+    PettingZooAECIncentiveEnv,
+    PettingZooIncentiveEnv,
+    PettingZooParallelIncentiveEnv,
+)
 from .domain.incentive_spec import IncentiveSpec, load_incentive_spec
 from .domain.scenario import Scenario
 from .llm import (
@@ -37,6 +41,7 @@ __all__ = [
     "Observation",
     "PettingZooAECIncentiveEnv",
     "PettingZooIncentiveEnv",
+    "PettingZooParallelIncentiveEnv",
     "PolicyDecision",
     "RecordedLLMClient",
     "Scenario",

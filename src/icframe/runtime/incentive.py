@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import random
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -175,13 +176,13 @@ def run_incentive_simulation(
                 llm_client=llm_client,
             )
             decisions.append(decision)
-            if observer is not None:
-                observer.record_policy_decision(decision)
             if llm_call is not None:
                 llm_calls.append(llm_call)
                 if observer is not None:
                     observer.record_llm_call(llm_call)
             if transition is None:
+                if observer is not None:
+                    observer.record_policy_decision(decision)
                 continue
             explanation = explain_transition_availability(
                 spec,
@@ -194,6 +195,13 @@ def run_incentive_simulation(
             if observer is not None:
                 observer.record_constraint_explanation(explanation)
             if not explanation.available:
+                decision.policy_state_delta = {
+                    "blocked": True,
+                    "constraint_id": explanation.constraint_id,
+                    "reasons": explanation.reasons,
+                }
+                if observer is not None:
+                    observer.record_policy_decision(decision)
                 continue
             event = _execute_transition(
                 world,
@@ -206,6 +214,8 @@ def run_incentive_simulation(
                 turn_index,
             )
             events.append(event)
+            if observer is not None:
+                observer.record_policy_decision(decision)
             if observer is not None:
                 observer.record_event(event)
     metric_results = compute_metrics(spec, events)
@@ -295,7 +305,11 @@ def choose_action(
 ) -> PolicyDecision:
     """Choose an action over visible action labels and return an auditable decision."""
 
-    estimated = estimated_scalar_rewards or {action: 0.0 for action in action_space}
+    if estimated_scalar_rewards is None:
+        values = memory.get("policy", {}).get("value_estimates", {})
+        estimated = {action: float(values.get(action, 0.0)) for action in action_space}
+    else:
+        estimated = estimated_scalar_rewards
     behavior = behavior or {}
     chosen_action: str | None = None
     probability: float | None = None
@@ -422,9 +436,8 @@ def _choose_transition(
         if transition.from_state == agent.current_state
         and transition.availability is not Availability.HARD_BLOCKED
     ]
-    estimated = {
-        transition.action: _expected_scalar_reward(agent, transition) for transition in candidates
-    }
+    policy_memory = _ensure_policy_memory(agent)
+    estimated = _estimated_values(agent, observation, candidates, policy_memory)
     decision = PolicyDecision(
         run_id=world.run_id,
         trace_id=world.trace_id,
@@ -470,18 +483,53 @@ def _choose_transition(
             decision.decision_probability = exploration_rate / len(candidates)
             decision.rationale = "epsilon_explore"
             return transition, decision, None
-    scored = [(transition, _expected_scalar_reward(agent, transition)) for transition in candidates]
-    if agent.policy in {
-        PolicyBackend.STOCHASTIC_WEIGHTED,
-        PolicyBackend.THOMPSON_SAMPLING_BANDIT,
-        PolicyBackend.CONTEXTUAL_BANDIT,
-        PolicyBackend.UCB_BANDIT,
-    }:
+        transition = _best_transition(candidates, estimated)
+        decision.chosen_action = transition.action
+        decision.decision_probability = 1.0 - exploration_rate
+        decision.rationale = "epsilon_exploit_learned_value"
+        return transition, decision, None
+    if agent.policy is PolicyBackend.UCB_BANDIT:
+        transition = _choose_ucb_transition(agent, candidates, policy_memory)
+        decision.chosen_action = transition.action
+        decision.rationale = "ucb_bandit"
+        decision.estimated_scalar_rewards = _ucb_scores(agent, candidates, policy_memory)
+        return transition, decision, None
+    if agent.policy is PolicyBackend.THOMPSON_SAMPLING_BANDIT:
+        samples = _thompson_samples(world.rng, candidates, policy_memory)
+        transition = _best_transition(candidates, samples)
+        decision.chosen_action = transition.action
+        decision.rationale = "thompson_sampling_bandit"
+        decision.estimated_scalar_rewards = samples
+        return transition, decision, None
+    if agent.policy is PolicyBackend.CONTEXTUAL_BANDIT:
+        scores = _contextual_scores(agent, observation, candidates, policy_memory)
+        transition = _best_transition(candidates, scores)
+        decision.chosen_action = transition.action
+        decision.rationale = "contextual_bandit"
+        decision.estimated_scalar_rewards = scores
+        return transition, decision, None
+    if agent.policy is PolicyBackend.Q_LEARNING_SIMPLE:
+        exploration_rate = agent.behavior.get("exploration_rate", 0.1)
+        if world.rng.random() < exploration_rate:
+            transition = world.rng.choice(candidates)
+            decision.chosen_action = transition.action
+            decision.decision_probability = exploration_rate / len(candidates)
+            decision.rationale = "q_learning_explore"
+            return transition, decision, None
+        q_values = _q_values_for_state(agent.current_state, candidates, policy_memory)
+        transition = _best_transition(candidates, q_values)
+        decision.chosen_action = transition.action
+        decision.decision_probability = 1.0 - exploration_rate
+        decision.rationale = "q_learning_exploit"
+        decision.estimated_scalar_rewards = q_values
+        return transition, decision, None
+    scored = [(transition, estimated[transition.action]) for transition in candidates]
+    if agent.policy is PolicyBackend.STOCHASTIC_WEIGHTED:
         transition = _weighted_choice(world.rng, scored)
         decision.chosen_action = transition.action
         decision.rationale = agent.policy.value
         return transition, decision, None
-    transition = max(scored, key=lambda item: (item[1], item[0].id))[0]
+    transition = _best_transition(candidates, estimated)
     decision.chosen_action = transition.action
     decision.decision_probability = 1.0 - agent.behavior.get("exploration_rate", 0.0)
     decision.rationale = "max_expected_scalar_reward"
@@ -554,6 +602,16 @@ def _execute_transition(
     agent.memory["known_transitions"] = tuple(sorted(known))
     scalar_reward = _scalarize(agent.scalarizer, outcome)
     world.learned_values[agent.id][transition.id] = scalar_reward
+    decision.policy_state_delta = _update_policy_memory(
+        agent,
+        decision,
+        from_state=from_state,
+        action=transition.action,
+        to_state=transition.to_state,
+        reward=scalar_reward,
+        spec=world.spec,
+        observation=observation,
+    )
     event_id = _event_id(step, turn_index, agent.id)
     explanation.event_id = event_id
     return SimulationEvent(
@@ -714,6 +772,274 @@ def _visible_outcome_vector(profile, outcome: OutcomeVector) -> OutcomeVector:
         ):
             visible[channel] = value
     return visible
+
+
+def _ensure_policy_memory(agent: AgentRuntimeState) -> dict[str, Any]:
+    policy = agent.memory.setdefault("policy", {})
+    policy.setdefault("action_counts", {})
+    policy.setdefault("total_rewards", {})
+    policy.setdefault("value_estimates", {})
+    policy.setdefault("q_values", {})
+    policy.setdefault("thompson", {})
+    policy.setdefault("contextual", {"weights": {}, "last_features": {}})
+    return policy
+
+
+def _estimated_values(
+    agent: AgentRuntimeState,
+    observation: Observation,
+    candidates: list[Transition],
+    policy_memory: dict[str, Any],
+) -> dict[str, float]:
+    if agent.policy is PolicyBackend.Q_LEARNING_SIMPLE:
+        return _q_values_for_state(observation.state, candidates, policy_memory)
+    if agent.policy is PolicyBackend.CONTEXTUAL_BANDIT:
+        return _contextual_scores(agent, observation, candidates, policy_memory)
+    values = policy_memory.get("value_estimates", {})
+    counts = policy_memory.get("action_counts", {})
+    estimates: dict[str, float] = {}
+    for transition in candidates:
+        if transition.action in values and int(counts.get(transition.action, 0)) > 0:
+            estimates[transition.action] = float(values[transition.action])
+        elif "initial_value" in agent.behavior:
+            estimates[transition.action] = float(agent.behavior["initial_value"])
+        else:
+            estimates[transition.action] = _expected_scalar_reward(agent, transition)
+    return estimates
+
+
+def _best_transition(candidates: list[Transition], scores: dict[str, float]) -> Transition:
+    indexed = enumerate(candidates)
+    return max(indexed, key=lambda item: (scores.get(item[1].action, 0.0), -item[0], item[1].id))[1]
+
+
+def _choose_ucb_transition(
+    agent: AgentRuntimeState,
+    candidates: list[Transition],
+    policy_memory: dict[str, Any],
+) -> Transition:
+    counts = policy_memory.get("action_counts", {})
+    for transition in candidates:
+        if int(counts.get(transition.action, 0)) == 0:
+            return transition
+    scores = _ucb_scores(agent, candidates, policy_memory)
+    return _best_transition(candidates, scores)
+
+
+def _ucb_scores(
+    agent: AgentRuntimeState,
+    candidates: list[Transition],
+    policy_memory: dict[str, Any],
+) -> dict[str, float]:
+    counts = policy_memory.get("action_counts", {})
+    values = policy_memory.get("value_estimates", {})
+    total_count = max(sum(int(counts.get(transition.action, 0)) for transition in candidates), 1)
+    coefficient = float(agent.behavior.get("ucb_exploration_coefficient", 1.0))
+    scores: dict[str, float] = {}
+    for transition in candidates:
+        count = int(counts.get(transition.action, 0))
+        if count == 0:
+            scores[transition.action] = float("inf")
+        else:
+            bonus = coefficient * math.sqrt(math.log(total_count + 1.0) / count)
+            scores[transition.action] = float(values.get(transition.action, 0.0)) + bonus
+    return scores
+
+
+def _thompson_samples(
+    rng: random.Random,
+    candidates: list[Transition],
+    policy_memory: dict[str, Any],
+) -> dict[str, float]:
+    posterior = policy_memory.get("thompson", {})
+    samples: dict[str, float] = {}
+    for transition in candidates:
+        stats = posterior.get(transition.action, {})
+        mean = float(stats.get("mean", 0.0))
+        count = int(stats.get("count", 0))
+        variance = float(stats.get("variance", 1.0))
+        stddev = math.sqrt(max(variance, 1e-9) / (count + 1))
+        samples[transition.action] = rng.gauss(mean, stddev)
+    return samples
+
+
+def _contextual_scores(
+    agent: AgentRuntimeState,
+    observation: Observation,
+    candidates: list[Transition],
+    policy_memory: dict[str, Any],
+) -> dict[str, float]:
+    del agent
+    contextual = policy_memory.setdefault("contextual", {"weights": {}, "last_features": {}})
+    weights_by_action = contextual.setdefault("weights", {})
+    last_features = contextual.setdefault("last_features", {})
+    scores: dict[str, float] = {}
+    for transition in candidates:
+        features = _context_features(observation, transition)
+        weights = weights_by_action.setdefault(transition.action, {})
+        last_features[transition.action] = features
+        scores[transition.action] = sum(
+            float(weights.get(feature, 0.0)) * value for feature, value in features.items()
+        )
+    return scores
+
+
+def _context_features(observation: Observation, transition: Transition) -> dict[str, float]:
+    features: dict[str, float] = {
+        "bias": 1.0,
+        f"state:{observation.state}": 1.0,
+        f"action:{transition.action}": 1.0,
+    }
+    for tag in transition.tags:
+        features[f"tag:{tag}"] = 1.0
+    for transition_id, outcome in observation.visible_outcomes.items():
+        for channel, value in outcome.items():
+            features[f"visible:{transition_id}:{channel}"] = float(value)
+    return features
+
+
+def _q_values_for_state(
+    state: str,
+    candidates: list[Transition],
+    policy_memory: dict[str, Any],
+) -> dict[str, float]:
+    q_table = policy_memory.setdefault("q_values", {})
+    state_values = q_table.setdefault(state, {})
+    return {
+        transition.action: float(state_values.get(transition.action, 0.0))
+        for transition in candidates
+    }
+
+
+def _update_policy_memory(
+    agent: AgentRuntimeState,
+    decision: PolicyDecision,
+    *,
+    from_state: str,
+    action: str,
+    to_state: str,
+    reward: float,
+    spec: IncentiveSpec,
+    observation: Observation,
+) -> dict[str, Any]:
+    policy_memory = _ensure_policy_memory(agent)
+    counts = policy_memory.setdefault("action_counts", {})
+    totals = policy_memory.setdefault("total_rewards", {})
+    values = policy_memory.setdefault("value_estimates", {})
+    old_count = int(counts.get(action, 0))
+    old_value = float(values.get(action, 0.0))
+    new_count = old_count + 1
+    new_total = float(totals.get(action, 0.0)) + reward
+    new_value = old_value + (reward - old_value) / new_count
+    counts[action] = new_count
+    totals[action] = new_total
+    values[action] = new_value
+    delta: dict[str, Any] = {
+        "action": action,
+        "reward": reward,
+        "count": {"old": old_count, "new": new_count},
+        "value_estimate": {"old": old_value, "new": new_value},
+    }
+
+    if agent.policy is PolicyBackend.THOMPSON_SAMPLING_BANDIT:
+        delta["thompson"] = _update_thompson(policy_memory, action, reward)
+    if agent.policy is PolicyBackend.CONTEXTUAL_BANDIT:
+        delta["contextual"] = _update_contextual(agent, policy_memory, observation, action, reward)
+    if agent.policy is PolicyBackend.Q_LEARNING_SIMPLE:
+        delta["q_learning"] = _update_q_learning(
+            agent,
+            policy_memory,
+            spec,
+            from_state=from_state,
+            action=action,
+            to_state=to_state,
+            reward=reward,
+        )
+    decision.estimated_scalar_rewards[action] = new_value
+    return delta
+
+
+def _update_thompson(
+    policy_memory: dict[str, Any],
+    action: str,
+    reward: float,
+) -> dict[str, Any]:
+    posterior = policy_memory.setdefault("thompson", {})
+    stats = posterior.setdefault(action, {"count": 0, "mean": 0.0, "m2": 0.0, "variance": 1.0})
+    old = dict(stats)
+    count = int(stats.get("count", 0)) + 1
+    mean = float(stats.get("mean", 0.0))
+    delta = reward - mean
+    mean += delta / count
+    m2 = float(stats.get("m2", 0.0)) + delta * (reward - mean)
+    variance = max(m2 / (count - 1), 1.0) if count > 1 else 1.0
+    stats.update({"count": count, "mean": mean, "m2": m2, "variance": variance})
+    return {"old": old, "new": dict(stats)}
+
+
+def _update_contextual(
+    agent: AgentRuntimeState,
+    policy_memory: dict[str, Any],
+    observation: Observation,
+    action: str,
+    reward: float,
+) -> dict[str, Any]:
+    del observation
+    contextual = policy_memory.setdefault("contextual", {"weights": {}, "last_features": {}})
+    weights_by_action = contextual.setdefault("weights", {})
+    last_features = contextual.setdefault("last_features", {})
+    features = last_features.get(action, {"bias": 1.0})
+    weights = weights_by_action.setdefault(action, {})
+    old_score = sum(float(weights.get(feature, 0.0)) * value for feature, value in features.items())
+    learning_rate = float(agent.behavior.get("learning_rate", 0.1))
+    error = reward - old_score
+    changed: dict[str, dict[str, float]] = {}
+    for feature, value in features.items():
+        old_weight = float(weights.get(feature, 0.0))
+        new_weight = old_weight + learning_rate * error * value
+        weights[feature] = new_weight
+        changed[feature] = {"old": old_weight, "new": new_weight}
+    return {"old_score": old_score, "error": error, "weights": changed}
+
+
+def _update_q_learning(
+    agent: AgentRuntimeState,
+    policy_memory: dict[str, Any],
+    spec: IncentiveSpec,
+    *,
+    from_state: str,
+    action: str,
+    to_state: str,
+    reward: float,
+) -> dict[str, float]:
+    alpha = float(agent.behavior.get("learning_rate", agent.behavior.get("alpha", 0.1)))
+    gamma = float(agent.behavior.get("discount_factor", agent.behavior.get("gamma", 0.9)))
+    q_table = policy_memory.setdefault("q_values", {})
+    from_values = q_table.setdefault(from_state, {})
+    old_q = float(from_values.get(action, 0.0))
+    next_actions = [
+        transition
+        for transition in spec.transitions
+        if transition.from_state == to_state
+        and transition.availability is not Availability.HARD_BLOCKED
+    ]
+    next_values = q_table.setdefault(to_state, {})
+    max_next_q = (
+        max(float(next_values.get(transition.action, 0.0)) for transition in next_actions)
+        if next_actions
+        else 0.0
+    )
+    target = reward + gamma * max_next_q
+    new_q = old_q + alpha * (target - old_q)
+    from_values[action] = new_q
+    return {
+        "old": old_q,
+        "new": new_q,
+        "target": target,
+        "max_next_q": max_next_q,
+        "alpha": alpha,
+        "gamma": gamma,
+    }
 
 
 def _expected_scalar_reward(agent: AgentRuntimeState, transition: Transition) -> float:
