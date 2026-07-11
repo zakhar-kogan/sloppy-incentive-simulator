@@ -1,386 +1,165 @@
 from __future__ import annotations
 
-from typing import ClassVar
+import uuid
+from pathlib import Path
+from typing import ClassVar, TypeAlias
 
-from icframe.constraints import explain_transition_availability
-from icframe.domain.incentive_spec import Availability, IncentiveSpec, PolicyBackend
-from icframe.runtime.incentive import (
-    AgentRuntimeState,
-    Observation,
-    PolicyDecision,
-    _event_id,
-    _execute_transition,
-    _expand_population,
-    _observation_id,
-    _RuntimeWorld,
-    compile_observation,
-)
+from icframe.artifacts import ArtifactObserver
+from icframe.core.compiler import RuntimePlan, compile_runtime
+from icframe.core.engine import RuntimeEngine
+from icframe.core.observer import NoopObserver
+from icframe.core.packs import LoadedDomainPack, load_domain_pack
+from icframe.core.types import StepResult
+from icframe.domain.incentive_spec import PolicyKind, RetentionProfile, ScheduleMode
+
+try:  # Kept entirely outside the base install.
+    import numpy as np
+    from gymnasium import spaces
+    from pettingzoo import AECEnv, ParallelEnv
+except ImportError:  # pragma: no cover - exercised by base-install tests
+    np = None
+    spaces = None
+    AECEnv = object  # type: ignore[assignment,misc]
+    ParallelEnv = object  # type: ignore[assignment,misc]
 
 
-class PettingZooIncentiveEnv:
-    """Small PettingZoo-shaped adapter without importing PettingZoo at runtime.
+PackSource: TypeAlias = str | Path | LoadedDomainPack | RuntimePlan
+ExternalAction: TypeAlias = tuple[str, str | None]
 
-    The class exposes the pieces MARL trainers need first: agent IDs, observations,
-    action masks from transition availability, scalar rewards, and vector outcomes in
-    infos. A full AEC/Parallel subclass can wrap this once PettingZoo is installed.
-    """
 
-    metadata: ClassVar[dict[str, str]] = {"name": "icframe_incentive_v0_3"}
+def _require_marl() -> None:
+    if spaces is None or np is None or AECEnv is object:
+        raise RuntimeError("install icframe[marl] to use the PettingZoo adapters")
 
-    def __init__(self, spec: IncentiveSpec) -> None:
-        self.spec = spec
-        self.possible_agents = list(_expand_population(spec))
-        self.agents = list(self.possible_agents)
-        self._agent_state: dict[str, AgentRuntimeState] = {}
-        self.rewards: dict[str, float] = {}
-        self.infos: dict[str, dict[str, object]] = {}
-        self.world: _RuntimeWorld | None = None
 
-    def reset(self, seed: int | None = None) -> dict[str, Observation]:
-        import random
+def _plan(source: PackSource) -> RuntimePlan:
+    if isinstance(source, RuntimePlan):
+        return source
+    if isinstance(source, LoadedDomainPack):
+        return compile_runtime(source)
+    return compile_runtime(load_domain_pack(source))
 
-        run_seed = seed if seed is not None else self.spec.experiment.seeds[0]
-        self._agent_state = _expand_population(self.spec)
-        self.agents = list(self._agent_state)
-        self.rewards = {agent_id: 0.0 for agent_id in self.agents}
-        self.infos = {agent_id: {} for agent_id in self.agents}
-        self.world = _RuntimeWorld(
-            spec=self.spec,
-            rng=random.Random(run_seed),
-            seed=run_seed,
-            run_id=f"{self.spec.spec.name}:{run_seed}:pettingzoo",
-            trace_id=f"pettingzoo_{run_seed}",
-            agents=self._agent_state,
-        )
-        return {
-            agent_id: compile_observation(self.spec, self.world, agent)
-            for agent_id, agent in self._agent_state.items()
+
+class _ExternalRuntime:
+    def _configure(
+        self,
+        source: PackSource,
+        *,
+        artifact_root: str | Path | None,
+        retention: RetentionProfile,
+        run_id: str | None,
+    ) -> None:
+        _require_marl()
+        self.plan = _plan(source)
+        self.engine: RuntimeEngine | None = None
+        self.artifact_root = Path(artifact_root) if artifact_root is not None else None
+        self.retention = retention
+        self.requested_run_id = run_id
+        self.last_summary = None
+        self.possible_agents = _agent_ids(self.plan)
+        populations = _agent_populations(self.plan)
+        self._options: dict[str, tuple[ExternalAction, ...]] = {
+            agent_id: _action_options(self.plan, agent_id, populations)
+            for agent_id in self.possible_agents
         }
-
-    def action_mask(self, agent_id: str) -> list[int]:
-        if agent_id not in self._agent_state:
-            return [0 for _ in self.spec.actions.all]
-        state = self._agent_state[agent_id].current_state
-        available_actions = _available_actions(self.spec, agent_id, state)
-        return [1 if action in available_actions else 0 for action in self.spec.actions.all]
-
-    def action_space(self, agent_id: str) -> list[str]:
-        mask = self.action_mask(agent_id)
-        return [
-            action
-            for action, is_available in zip(self.spec.actions.all, mask, strict=True)
-            if is_available
-        ]
-
-    def observe(self, agent_id: str) -> Observation:
-        if self.world is None:
-            self.reset()
-        assert self.world is not None
-        return compile_observation(self.spec, self.world, self._agent_state[agent_id])
-
-
-try:
-    from pettingzoo import AECEnv as _AECEnv
-    from pettingzoo import ParallelEnv as _ParallelEnv
-except ImportError:  # pragma: no cover - exercised by base installs without the extra
-    _AECEnv = object
-    _ParallelEnv = object
-
-
-class PettingZooAECIncentiveEnv(_AECEnv):
-    """Optional PettingZoo AEC wrapper backed by the IncentiveSpec runtime."""
-
-    metadata: ClassVar[dict[str, str]] = {
-        "name": "icframe_incentive_v0_3_aec",
-        "render_modes": [],
-    }
-
-    def __init__(self, spec: IncentiveSpec) -> None:
-        if _AECEnv is object:
-            raise RuntimeError("install icframe[marl] to use PettingZooAECIncentiveEnv")
-        from gymnasium import spaces
-
-        self.spec = spec
-        self.possible_agents = list(_expand_population(spec))
-        self.agents: list[str] = []
-        self.agent_selection: str | None = None
-        self.rewards: dict[str, float] = {}
-        self._cumulative_rewards: dict[str, float] = {}
-        self.terminations: dict[str, bool] = {}
-        self.truncations: dict[str, bool] = {}
-        self.infos: dict[str, dict[str, object]] = {}
         self.observation_spaces = {
             agent_id: spaces.Dict(
                 {
-                    "action_mask": spaces.MultiBinary(len(spec.actions.all)),
-                    "state_index": spaces.Discrete(len(spec.states.all)),
+                    "action_mask": spaces.MultiBinary(len(self._options[agent_id])),
+                    "state_index": spaces.Discrete(len(self.plan.spec.states.all)),
                 }
             )
             for agent_id in self.possible_agents
         }
         self.action_spaces = {
-            agent_id: spaces.Discrete(len(spec.actions.all)) for agent_id in self.possible_agents
+            agent_id: spaces.Discrete(len(self._options[agent_id]))
+            for agent_id in self.possible_agents
         }
-        self._agent_state: dict[str, AgentRuntimeState] = {}
-        self.world: _RuntimeWorld | None = None
-        self._agent_cursor = 0
-        self._turn_count = 0
 
-    def reset(
-        self,
-        seed: int | None = None,
-        options: dict[str, object] | None = None,
-    ) -> dict[str, dict[str, object]]:
-        import random
-
-        del options
-        run_seed = seed if seed is not None else self.spec.experiment.seeds[0]
-        self._agent_state = _expand_population(self.spec)
-        self.agents = list(self._agent_state)
-        self.agent_selection = self.agents[0] if self.agents else None
-        self.rewards = {agent_id: 0.0 for agent_id in self.agents}
-        self._cumulative_rewards = {agent_id: 0.0 for agent_id in self.agents}
-        self.terminations = {agent_id: False for agent_id in self.agents}
-        self.truncations = {agent_id: False for agent_id in self.agents}
-        self.infos = {
-            agent_id: {"action_mask": self.action_mask(agent_id)} for agent_id in self.agents
-        }
-        self._agent_cursor = 0
-        self._turn_count = 0
-        self.world = _RuntimeWorld(
-            spec=self.spec,
-            rng=random.Random(run_seed),
+    def _reset_engine(self, seed: int | None) -> None:
+        run_seed = seed if seed is not None else self.plan.spec.experiment.seeds[0]
+        run_id = self.requested_run_id or f"run_{uuid.uuid4().hex[:12]}"
+        observer = (
+            ArtifactObserver(self.artifact_root, run_id, self.retention)
+            if self.artifact_root is not None
+            else NoopObserver()
+        )
+        self.engine = RuntimeEngine(
+            self.plan,
+            run_id=run_id,
             seed=run_seed,
-            run_id=f"{self.spec.spec.name}:{run_seed}:pettingzoo-aec",
-            trace_id=f"pettingzoo_aec_{run_seed}",
-            agents=self._agent_state,
+            observer=observer,
+            retention=self.retention,
         )
-        return {agent_id: self.observe(agent_id) for agent_id in self.agents}
+        for agent_id, agent in self.engine.world.agents.items():
+            agent.policy_kind = PolicyKind.EXTERNAL
+            self.engine.policies[agent_id] = None
 
-    def observe(self, agent: str) -> dict[str, object]:
-        state_index = 0
-        if agent in self._agent_state:
-            state_index = self.spec.states.all.index(self._agent_state[agent].current_state)
-        return {
-            "action_mask": self.action_mask(agent),
-            "state_index": state_index,
-        }
+    def observation_space(self, agent: str):
+        return self.observation_spaces[agent]
 
-    def action_mask(self, agent_id: str) -> list[int]:
-        if agent_id not in self._agent_state:
-            return [0 for _ in self.spec.actions.all]
-        state = self._agent_state[agent_id].current_state
-        available_actions = _available_actions(self.spec, agent_id, state)
-        return [1 if action in available_actions else 0 for action in self.spec.actions.all]
+    def action_space(self, agent: str):
+        return self.action_spaces[agent]
 
-    def last(
-        self,
-        observe: bool = True,
-    ) -> tuple[dict[str, object] | None, float, bool, bool, dict[str, object]]:
-        if self.agent_selection is None:
-            return None, 0.0, True, True, {}
-        agent_id = self.agent_selection
-        observation = self.observe(agent_id) if observe else None
-        return (
-            observation,
-            self.rewards.get(agent_id, 0.0),
-            self.terminations.get(agent_id, False),
-            self.truncations.get(agent_id, False),
-            self.infos.get(agent_id, {}),
-        )
-
-    def step(self, action: int | None) -> None:
-        if self.world is None:
-            self.reset()
-        if self.agent_selection is None or not self.agents:
-            return
-        assert self.world is not None
-        agent_id = self.agent_selection
-        self.rewards = {current: 0.0 for current in self.agents}
-        if (
-            action is not None
-            and not self.terminations[agent_id]
-            and not self.truncations[agent_id]
-        ):
-            self._apply_action(agent_id, action)
-        self._turn_count += 1
-        max_turns = self.spec.experiment.steps * max(len(self.agents), 1)
-        if self._turn_count >= max_turns:
-            self.truncations = {current: True for current in self.agents}
-        self._advance_agent()
-
-    def render(self) -> None:
-        return None
-
-    def close(self) -> None:
-        return None
-
-    def _apply_action(self, agent_id: str, action: int) -> None:
-        assert self.world is not None
-        if action < 0 or action >= len(self.spec.actions.all):
-            self.infos[agent_id] = {"invalid_action": action}
-            return
-        action_name = self.spec.actions.all[action]
-        agent = self._agent_state[agent_id]
-        transition = next(
-            (
-                item
-                for item in self.spec.transitions
-                if item.from_state == agent.current_state
-                and item.action == action_name
-                and item.availability is not Availability.HARD_BLOCKED
-            ),
-            None,
-        )
-        if transition is None:
-            self.infos[agent_id] = {"invalid_action": action_name}
-            return
-        step = self._turn_count + 1
-        observation = compile_observation(self.spec, self.world, agent, step=step, turn_index=1)
-        decision = PolicyDecision(
-            run_id=self.world.run_id,
-            trace_id=self.world.trace_id,
-            step=step,
-            observation_id=observation.observation_id or _observation_id(step, 1, agent_id),
-            policy_decision_id=f"decision_pettingzoo_{step:04d}_{agent_id}",
-            agent_id=agent_id,
-            policy_backend=PolicyBackend.PETTINGZOO_EXTERNAL,
-            candidate_actions=[
-                candidate.action
-                for candidate in self.spec.transitions
-                if candidate.from_state == agent.current_state
-            ],
-            chosen_action=action_name,
-        )
-        explanation = explain_transition_availability(
-            self.spec,
-            actor_id=agent_id,
-            state=agent.current_state,
-            action=action_name,
-            constraint_id=f"constraint_pettingzoo_{step:04d}_{agent_id}",
-            policy_decision_id=decision.policy_decision_id,
-        )
-        if not explanation.available:
-            self.infos[agent_id] = {
-                "constraint_id": explanation.constraint_id,
-                "blocked": explanation.blocked,
-                "norm_status": explanation.norm_status.value,
-                "violations": explanation.violations,
-                "remediation_actions": explanation.remediation_actions,
+    def _observation(self, agent_id: str) -> dict[str, object]:
+        if self.engine is None or agent_id not in self.engine.world.agents:
+            return {
+                "action_mask": np.zeros(len(self._options[agent_id]), dtype=np.int8),
+                "state_index": 0,
             }
-            return
-        event = _execute_transition(
-            self.world,
-            agent,
-            transition,
-            step,
-            explanation,
-            observation,
-            decision,
-            1,
-        )
-        reward = event.scalar_rewards.get(agent_id, 0.0)
-        self.rewards[agent_id] = reward
-        self._cumulative_rewards[agent_id] += reward
-        self.infos[agent_id] = {
-            "event_id": _event_id(step, 1, agent_id),
-            "constraint_id": event.constraint_id,
-            "norm_status": explanation.norm_status.value,
-            "violations": explanation.violations,
-            "remediation_actions": explanation.remediation_actions,
-            "outcome_vector": event.final_outcome_vector,
-            "scalar_reward": reward,
-            "action_mask": self.action_mask(agent_id),
+        observation = self.engine.observe(agent_id)
+        valid = {(item.action, item.target_id) for item in observation.candidates}
+        return {
+            "action_mask": np.asarray(
+                [int(option in valid) for option in self._options[agent_id]],
+                dtype=np.int8,
+            ),
+            "state_index": self.plan.spec.states.all.index(observation.state),
         }
 
-    def _advance_agent(self) -> None:
-        if not self.agents:
-            self.agent_selection = None
-            return
-        self._agent_cursor = (self._agent_cursor + 1) % len(self.agents)
-        self.agent_selection = self.agents[self._agent_cursor]
+    def _external_action(self, agent_id: str, action: int) -> ExternalAction:
+        if action < 0 or action >= len(self._options[agent_id]):
+            raise ValueError(f"action {action} is outside the action space for {agent_id}")
+        return self._options[agent_id][action]
 
 
-class PettingZooParallelIncentiveEnv(_ParallelEnv):
-    """Optional PettingZoo Parallel wrapper for simultaneous external policies."""
+class PettingZooParallelIncentiveEnv(_ExternalRuntime, ParallelEnv):
+    """PettingZoo Parallel API backed directly by the atomic ICFRAME engine."""
 
-    metadata: ClassVar[dict[str, str]] = {
-        "name": "icframe_incentive_v0_3_parallel",
+    metadata: ClassVar[dict[str, object]] = {
+        "name": "icframe_incentive_v0_4_parallel",
         "render_modes": [],
+        "is_parallelizable": True,
     }
 
-    def __init__(self, spec: IncentiveSpec) -> None:
-        if _ParallelEnv is object:
-            raise RuntimeError("install icframe[marl] to use PettingZooParallelIncentiveEnv")
-        from gymnasium import spaces
-
-        self.spec = spec
-        self.possible_agents = list(_expand_population(spec))
+    def __init__(
+        self,
+        source: PackSource,
+        *,
+        artifact_root: str | Path | None = None,
+        retention: RetentionProfile = RetentionProfile.TRAINING,
+        run_id: str | None = None,
+    ) -> None:
+        self._configure(
+            source,
+            artifact_root=artifact_root,
+            retention=retention,
+            run_id=run_id,
+        )
+        if self.plan.spec.experiment.schedule is not ScheduleMode.PARALLEL_SIMULTANEOUS:
+            raise ValueError("the Parallel adapter requires schedule=parallel_simultaneous")
         self.agents: list[str] = []
-        self.rewards: dict[str, float] = {}
-        self.terminations: dict[str, bool] = {}
-        self.truncations: dict[str, bool] = {}
-        self.infos: dict[str, dict[str, object]] = {}
-        self.observation_spaces = {
-            agent_id: spaces.Dict(
-                {
-                    "action_mask": spaces.MultiBinary(len(spec.actions.all)),
-                    "state_index": spaces.Discrete(len(spec.states.all)),
-                }
-            )
-            for agent_id in self.possible_agents
-        }
-        self.action_spaces = {
-            agent_id: spaces.Discrete(len(spec.actions.all)) for agent_id in self.possible_agents
-        }
-        self._agent_state: dict[str, AgentRuntimeState] = {}
-        self.world: _RuntimeWorld | None = None
-        self._turn_count = 0
 
     def reset(
         self,
         seed: int | None = None,
         options: dict[str, object] | None = None,
     ) -> tuple[dict[str, dict[str, object]], dict[str, dict[str, object]]]:
-        import random
-
         del options
-        run_seed = seed if seed is not None else self.spec.experiment.seeds[0]
-        self._agent_state = _expand_population(self.spec)
-        self.agents = list(self._agent_state)
-        self.rewards = {agent_id: 0.0 for agent_id in self.agents}
-        self.terminations = {agent_id: False for agent_id in self.agents}
-        self.truncations = {agent_id: False for agent_id in self.agents}
-        self.infos = {
-            agent_id: {"action_mask": self.action_mask(agent_id)} for agent_id in self.agents
-        }
-        self._turn_count = 0
-        self.world = _RuntimeWorld(
-            spec=self.spec,
-            rng=random.Random(run_seed),
-            seed=run_seed,
-            run_id=f"{self.spec.spec.name}:{run_seed}:pettingzoo-parallel",
-            trace_id=f"pettingzoo_parallel_{run_seed}",
-            agents=self._agent_state,
-        )
-        observations = {agent_id: self.observe(agent_id) for agent_id in self.agents}
-        return observations, self.infos
-
-    def observe(self, agent: str) -> dict[str, object]:
-        state_index = 0
-        if agent in self._agent_state:
-            state_index = self.spec.states.all.index(self._agent_state[agent].current_state)
-        return {
-            "action_mask": self.action_mask(agent),
-            "state_index": state_index,
-        }
-
-    def action_mask(self, agent_id: str) -> list[int]:
-        if agent_id not in self._agent_state:
-            return [0 for _ in self.spec.actions.all]
-        state = self._agent_state[agent_id].current_state
-        available_actions = _available_actions(self.spec, agent_id, state)
-        return [1 if action in available_actions else 0 for action in self.spec.actions.all]
+        self._reset_engine(seed)
+        self.agents = list(self.possible_agents)
+        observations = {agent: self._observation(agent) for agent in self.agents}
+        return observations, {agent: {} for agent in self.agents}
 
     def step(
         self,
@@ -392,20 +171,26 @@ class PettingZooParallelIncentiveEnv(_ParallelEnv):
         dict[str, bool],
         dict[str, dict[str, object]],
     ]:
-        if self.world is None:
-            self.reset()
-        assert self.world is not None
-        self.rewards = {agent_id: 0.0 for agent_id in self.agents}
-        self._turn_count += 1
-        for turn_index, (agent_id, action) in enumerate(sorted(actions.items()), start=1):
-            if agent_id not in self.agents:
-                continue
-            self._apply_action(agent_id, action, self._turn_count, turn_index)
-        max_turns = self.spec.experiment.steps
-        if self._turn_count >= max_turns:
-            self.truncations = {agent_id: True for agent_id in self.agents}
-        observations = {agent_id: self.observe(agent_id) for agent_id in self.agents}
-        return observations, self.rewards, self.terminations, self.truncations, self.infos
+        if self.engine is None:
+            raise RuntimeError("reset() must be called before step()")
+        acting_agents = list(self.agents)
+        missing = set(acting_agents) - set(actions)
+        if missing:
+            raise ValueError(f"parallel action map is missing agents: {sorted(missing)}")
+        selected = {
+            agent: self._external_action(agent, int(actions[agent])) for agent in acting_agents
+        }
+        result = self.engine.step_external(selected)
+        finished = result.terminated or self.engine.world.step >= self.plan.spec.experiment.steps
+        rewards = {agent: result.rewards.get(agent, 0.0) for agent in acting_agents}
+        terminations = {agent: result.terminated for agent in acting_agents}
+        truncations = {agent: finished and not result.terminated for agent in acting_agents}
+        infos = _step_infos(result, acting_agents)
+        observations = {agent: self._observation(agent) for agent in acting_agents}
+        if finished:
+            self.last_summary = self.engine.finish_session()
+            self.agents = []
+        return observations, rewards, terminations, truncations, infos
 
     def render(self) -> None:
         return None
@@ -413,99 +198,169 @@ class PettingZooParallelIncentiveEnv(_ParallelEnv):
     def close(self) -> None:
         return None
 
-    def _apply_action(self, agent_id: str, action: int, step: int, turn_index: int) -> None:
-        assert self.world is not None
-        if action < 0 or action >= len(self.spec.actions.all):
-            self.infos[agent_id] = {"invalid_action": action}
+
+class PettingZooAECIncentiveEnv(_ExternalRuntime, AECEnv):
+    """PettingZoo AEC API backed by the sequential ICFRAME engine."""
+
+    metadata: ClassVar[dict[str, object]] = {
+        "name": "icframe_incentive_v0_4_aec",
+        "render_modes": [],
+        "is_parallelizable": False,
+    }
+
+    def __init__(
+        self,
+        source: PackSource,
+        *,
+        artifact_root: str | Path | None = None,
+        retention: RetentionProfile = RetentionProfile.TRAINING,
+        run_id: str | None = None,
+    ) -> None:
+        self._configure(
+            source,
+            artifact_root=artifact_root,
+            retention=retention,
+            run_id=run_id,
+        )
+        if self.plan.spec.experiment.schedule is ScheduleMode.PARALLEL_SIMULTANEOUS:
+            raise ValueError("the AEC adapter requires a sequential schedule")
+        self.agents: list[str] = []
+        self.agent_selection = ""
+        self.rewards: dict[str, float] = {}
+        self._cumulative_rewards: dict[str, float] = {}
+        self.terminations: dict[str, bool] = {}
+        self.truncations: dict[str, bool] = {}
+        self.infos: dict[str, dict[str, object]] = {}
+        self._cycle_order: list[str] = []
+        self._cycle_cursor = 0
+        self._cycle_actions: dict[str, ExternalAction] = {}
+
+    def reset(
+        self,
+        seed: int | None = None,
+        options: dict[str, object] | None = None,
+    ) -> None:
+        del options
+        self._reset_engine(seed)
+        self.agents = list(self.possible_agents)
+        self.rewards = {agent: 0.0 for agent in self.agents}
+        self._cumulative_rewards = {agent: 0.0 for agent in self.agents}
+        self.terminations = {agent: False for agent in self.agents}
+        self.truncations = {agent: False for agent in self.agents}
+        self.infos = {agent: {} for agent in self.agents}
+        self._begin_cycle()
+
+    def observe(self, agent: str) -> dict[str, object]:
+        return self._observation(agent)
+
+    def step(self, action: int | None) -> None:
+        if not self.agents:
             return
-        action_name = self.spec.actions.all[action]
-        agent = self._agent_state[agent_id]
-        transition = next(
-            (
-                item
-                for item in self.spec.transitions
-                if item.from_state == agent.current_state
-                and item.action == action_name
-                and item.availability is not Availability.HARD_BLOCKED
-            ),
-            None,
-        )
-        if transition is None:
-            self.infos[agent_id] = {"invalid_action": action_name}
+        agent = self.agent_selection
+        if self.terminations[agent] or self.truncations[agent]:
+            self._was_dead_step(action)
             return
-        observation = compile_observation(
-            self.spec,
-            self.world,
-            agent,
-            step=step,
-            turn_index=turn_index,
-        )
-        decision = PolicyDecision(
-            run_id=self.world.run_id,
-            trace_id=self.world.trace_id,
-            step=step,
-            observation_id=(
-                observation.observation_id or _observation_id(step, turn_index, agent_id)
-            ),
-            policy_decision_id=f"decision_parallel_{step:04d}_{turn_index:04d}_{agent_id}",
-            agent_id=agent_id,
-            policy_backend=PolicyBackend.PETTINGZOO_EXTERNAL,
-            candidate_actions=[
-                candidate.action
-                for candidate in self.spec.transitions
-                if candidate.from_state == agent.current_state
-            ],
-            chosen_action=action_name,
-        )
-        explanation = explain_transition_availability(
-            self.spec,
-            actor_id=agent_id,
-            state=agent.current_state,
-            action=action_name,
-            constraint_id=f"constraint_parallel_{step:04d}_{turn_index:04d}_{agent_id}",
-            policy_decision_id=decision.policy_decision_id,
-        )
-        if not explanation.available:
-            self.infos[agent_id] = {
-                "constraint_id": explanation.constraint_id,
-                "blocked": explanation.blocked,
-                "norm_status": explanation.norm_status.value,
-                "violations": explanation.violations,
+        if action is None:
+            raise ValueError("live agents require an action")
+        assert self.engine is not None
+        self._cumulative_rewards[agent] = 0.0
+        self._clear_rewards()
+        self._cycle_actions[agent] = self._external_action(agent, int(action))
+        self._cycle_cursor += 1
+        if self._cycle_cursor < len(self._cycle_order):
+            self.agent_selection = self._cycle_order[self._cycle_cursor]
+            return
+
+        result = self.engine.step_external(self._cycle_actions)
+
+        self.rewards.update(result.rewards)
+        self.infos.update(_step_infos(result, self.agents))
+        self._accumulate_rewards()
+        finished = result.terminated or self.engine.world.step >= self.plan.spec.experiment.steps
+        if finished:
+            self.last_summary = self.engine.finish_session()
+            self.terminations = {current: result.terminated for current in self.agents}
+            self.truncations = {current: not result.terminated for current in self.agents}
+            self._deads_step_first()
+            return
+
+        self._begin_cycle()
+
+    def _begin_cycle(self) -> None:
+        self._cycle_order = list(self.agents)
+        self._cycle_cursor = 0
+        self._cycle_actions = {}
+        self.agent_selection = self._cycle_order[0] if self._cycle_order else ""
+
+    def render(self) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+
+def _agent_ids(plan: RuntimePlan) -> list[str]:
+    return [
+        f"{entry.archetype}_{index:03d}"
+        for entry in plan.spec.population
+        for index in range(entry.count)
+    ]
+
+
+def _agent_populations(plan: RuntimePlan) -> dict[str, str]:
+    return {
+        f"{entry.archetype}_{index:03d}": entry.archetype
+        for entry in plan.spec.population
+        for index in range(entry.count)
+    }
+
+
+def _action_options(
+    plan: RuntimePlan,
+    agent_id: str,
+    populations: dict[str, str],
+) -> tuple[ExternalAction, ...]:
+    result: list[ExternalAction] = []
+    seen: set[ExternalAction] = set()
+    for transition in plan.transitions:
+        if not transition.requires_target:
+            option = (transition.action, None)
+            if option not in seen:
+                seen.add(option)
+                result.append(option)
+            continue
+        for target_id, population in populations.items():
+            if target_id == agent_id:
+                continue
+            if transition.target_populations and population not in transition.target_populations:
+                continue
+            option = (transition.action, target_id)
+            if option not in seen:
+                seen.add(option)
+                result.append(option)
+    if not result:
+        raise ValueError(f"agent {agent_id} has no addressable action options")
+    return tuple(result)
+
+
+def _step_infos(
+    result: StepResult,
+    agents: list[str],
+) -> dict[str, dict[str, object]]:
+    events_by_actor = {event.actor_id: event for event in result.events if event.counts_as_action}
+    infos = {}
+    for agent in agents:
+        event = events_by_actor.get(agent)
+        infos[agent] = (
+            {
+                "event_id": event.event_id,
+                "action": event.action,
+                "target_id": event.target_id,
+                "outcome_vector": dict(event.outcomes_by_agent.get(agent, {})),
+                "violations": list(event.violations),
+                "enforced": event.enforced,
             }
-            return
-        event = _execute_transition(
-            self.world,
-            agent,
-            transition,
-            step,
-            explanation,
-            observation,
-            decision,
-            turn_index,
+            if event is not None
+            else {"failure": "invalid_or_unavailable_action"}
         )
-        reward = event.scalar_rewards.get(agent_id, 0.0)
-        self.rewards[agent_id] = reward
-        self.infos[agent_id] = {
-            "event_id": event.event_id,
-            "constraint_id": event.constraint_id,
-            "norm_status": explanation.norm_status.value,
-            "violations": explanation.violations,
-            "remediation_actions": explanation.remediation_actions,
-            "outcome_vector": event.final_outcome_vector,
-            "scalar_reward": reward,
-            "action_mask": self.action_mask(agent_id),
-        }
-
-
-def _available_actions(spec: IncentiveSpec, agent_id: str, state: str) -> set[str]:
-    available_actions: set[str] = set()
-    for action in spec.actions.all:
-        explanation = explain_transition_availability(
-            spec,
-            actor_id=agent_id,
-            state=state,
-            action=action,
-        )
-        if explanation.available:
-            available_actions.add(action)
-    return available_actions
+    return infos

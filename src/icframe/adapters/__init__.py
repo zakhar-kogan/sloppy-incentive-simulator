@@ -2,12 +2,10 @@
 
 from .pettingzoo import (
     PettingZooAECIncentiveEnv,
-    PettingZooIncentiveEnv,
     PettingZooParallelIncentiveEnv,
 )
 
 __all__ = [
     "PettingZooAECIncentiveEnv",
-    "PettingZooIncentiveEnv",
     "PettingZooParallelIncentiveEnv",
 ]
