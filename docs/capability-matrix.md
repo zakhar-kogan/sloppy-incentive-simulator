@@ -12,6 +12,6 @@
 | Policies | Deterministic, weighted stochastic, bandits, contextual, Q-learning, LLM, external | Training algorithms in core |
 | Symbolic | Static compile-time availability and explanations | Per-turn Clingo calls |
 | Retention | Audit, experiment, training | Unbounded in-memory traces |
-| Reports | One internal HTML projection with charts | Public report-model hierarchy or raw JSON presentation |
+| Reports | One internal UI/HTML projection with charts | Public report-model hierarchy or raw JSON presentation |
 
 Unsupported enum values, selectors, fields, and legacy versions fail validation or compilation. They never degrade into no-ops.

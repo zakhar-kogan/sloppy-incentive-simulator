@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>ICFRAME Workbench</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="config">
+        <header class="brand">
+          <span class="mark">IC</span>
+          <div><h1>ICFRAME</h1><p>Experiment workbench</p></div>
+        </header>
+
+        <div class="mode-switch" role="group" aria-label="Run mode">
+          <button class="mode active" data-mode="run">Experiment</button>
+          <button class="mode" data-mode="study">Study</button>
+        </div>
+
+        <section class="form-section">
+          <label for="pack">Domain pack</label>
+          <select id="pack"></select>
+          <p id="packDescription" class="hint"></p>
+          <div id="packMeta" class="meta"></div>
+        </section>
+
+        <section class="form-section run-only">
+          <div class="grid-two">
+            <div><label for="seeds">Seeds</label><input id="seeds" value="0" aria-describedby="seedsHint"><p id="seedsHint" class="hint">Comma-separated integers create a batch.</p></div>
+            <div><label for="retention">Retention</label><select id="retention"><option value="experiment">Experiment</option><option value="audit">Audit</option><option value="training">Training</option></select></div>
+          </div>
+        </section>
+
+        <section class="form-section study-only hidden">
+          <div class="grid-two">
+            <div><label for="studyMode">Objective mode</label><select id="studyMode"><option value="single">Single objective</option><option value="pareto">Pareto</option></select></div>
+            <div><label for="trials">Trials</label><input id="trials" type="number" min="1" value="20"></div>
+            <div><label for="studySeeds">Evaluation seeds</label><input id="studySeeds" value="0"></div>
+            <div><label for="workers">Workers</label><input id="workers" type="number" min="1" max="16" value="4"></div>
+          </div>
+        </section>
+
+        <section id="llmSettings" class="form-section hidden">
+          <div class="section-head"><h2>Live LLM</h2><span id="llmCredentialState" class="meta"></span></div>
+          <p class="hint">This domain contains an LLM policy. Calls use LiteLLM and real provider credentials.</p>
+          <div class="grid-two">
+            <div><label for="llmModel">Model</label><input id="llmModel" placeholder="openai/gpt-4o-mini"></div>
+            <div><label for="llmTemperature">Temperature</label><input id="llmTemperature" type="number" min="0" max="2" step="0.1" value="0"></div>
+          </div>
+          <label for="llmBaseUrl">OpenAI-compatible base URL</label><input id="llmBaseUrl" type="url">
+          <label for="llmApiKey">API key</label><input id="llmApiKey" type="password" autocomplete="off" aria-describedby="keyHint"><p id="keyHint" class="hint">Held only in this browser request and never written to artifacts.</p>
+          <label for="llmSystemPrompt">System prompt</label><textarea id="llmSystemPrompt" rows="5"></textarea>
+          <details class="prompt-preview"><summary>Generated observation prompt</summary><pre id="llmPromptPreview"></pre></details>
+          <div id="liveBudget" class="grid-two study-only hidden">
+            <div><label for="maxCalls">Call budget</label><input id="maxCalls" type="number" min="1"></div>
+            <div><label for="maxCost">Cost budget, USD</label><input id="maxCost" type="number" min="0.01" step="0.01"></div>
+          </div>
+        </section>
+
+        <section class="form-section">
+          <div class="section-head"><h2 id="parameterTitle">Parameters</h2><button id="resetParams" class="text-button">Reset</button></div>
+          <div id="parameters"></div>
+        </section>
+        <section id="objectivesSection" class="form-section study-only hidden"><h2>Objectives</h2><div id="objectives"></div></section>
+
+        <div class="run-actions">
+          <button id="start" class="primary">Run experiment</button>
+          <button id="cancel" class="secondary hidden">Cancel</button>
+        </div>
+        <div id="formError" class="error" role="alert"></div>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div><div class="eyebrow">Artifact</div><h2 id="title">Select a run or study</h2><p id="subtitle"></p></div>
+          <div class="top-actions"><span id="status" class="status">idle</span><a id="report" class="button-link hidden" target="_blank">Export HTML</a></div>
+        </header>
+        <nav class="tabs" aria-label="Artifact views">
+          <button class="tab active" data-tab="summary">Summary</button>
+          <button class="tab" data-tab="agents">Agents</button>
+          <button class="tab" data-tab="trials">Trials</button>
+        </nav>
+        <section id="summary" class="panel active">
+          <div id="empty" class="empty">Run an experiment or select an artifact from history.</div>
+          <div id="facts"></div><div id="metrics"></div><div id="chart"></div><div id="actions"></div><div id="constraints"></div>
+        </section>
+        <section id="agents" class="panel"><div id="agentTable"></div></section>
+        <section id="trials" class="panel"><div id="trialTable"></div></section>
+      </main>
+
+      <aside class="catalog">
+        <div class="catalog-head"><h2>History</h2><button id="refresh" class="text-button">Refresh</button></div>
+        <div class="catalog-tabs">
+          <button class="catalog-tab active" data-kind="runs">Runs <span id="runCount" class="count"></span></button>
+          <button class="catalog-tab" data-kind="studies">Studies <span id="studyCount" class="count"></span></button>
+        </div>
+        <div id="history" aria-live="polite"></div>
+        <button id="compare" class="secondary wide" disabled>Compare selected</button>
+        <div class="pager"><button id="previous" aria-label="Previous page">&lt;</button><span id="page">1</span><button id="next" aria-label="Next page">&gt;</button></div>
+      </aside>
+    </div>
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>
