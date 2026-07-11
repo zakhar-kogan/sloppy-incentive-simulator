@@ -11,7 +11,7 @@ from icframe.core.observer import NoopObserver
 from icframe.core.packs import load_domain_pack
 from icframe.domain.incentive_spec import IncentiveSpec
 from icframe.domain.run import RunStatus, RunSummary
-from icframe.llm import RecordedLLMClient
+from icframe.llm import _RecordedLLMClient
 
 
 def replay_run(
@@ -28,7 +28,7 @@ def replay_run(
         raise RuntimeError("domain hook hash changed; exact replay is unavailable")
     effective = replace(pack, spec=spec)
     llm_client = (
-        RecordedLLMClient(run_dir / "llm_calls.jsonl")
+        _RecordedLLMClient(run_dir / "llm_calls.jsonl")
         if (run_dir / "llm_calls.jsonl").exists()
         else None
     )

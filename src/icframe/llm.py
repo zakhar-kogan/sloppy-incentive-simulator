@@ -9,6 +9,7 @@ from typing import Protocol
 from pydantic import Field
 
 from icframe.domain.base import ICFrameModel
+from icframe.runtime_settings import RuntimeLLMSettings, load_runtime_llm_settings
 
 
 class LLMRequest(ICFrameModel):
@@ -67,40 +68,40 @@ class LLMClient(Protocol):
         """Return a model completion for a policy decision request."""
 
 
-class FakeLLMClient:
-    """Deterministic LLM client for tests and replay-free local development."""
-
-    def __init__(self, action: str, *, rationale: str = "fake-client") -> None:
-        self.action = action
-        self.rationale = rationale
-        self.requests: list[LLMRequest] = []
-
-    def complete(self, request: LLMRequest) -> LLMResponse:
-        self.requests.append(request)
-        parsed: dict[str, object] = {"action": self.action, "rationale": self.rationale}
-        return LLMResponse(
-            content=json.dumps(parsed, sort_keys=True),
-            parsed=parsed,
-            provider=request.provider,
-            model=request.model,
-        )
-
-
-class RecordedLLMClient:
+class _RecordedLLMClient:
     """Replay LLM responses from a prior llm_calls.jsonl artifact."""
 
     def __init__(self, records_path: str | Path, *, fail_on_missing: bool = True) -> None:
         self.fail_on_missing = fail_on_missing
-        self.records_by_id: dict[str, LLMCallRecord] = {}
-        self.records_by_hash: dict[str, LLMCallRecord] = {}
+        self.records_by_id: dict[str, dict[str, object]] = {}
+        self.records_by_hash: dict[str, dict[str, object]] = {}
         path = Path(records_path)
         if path.exists():
             for line in path.read_text().splitlines():
                 if not line.strip():
                     continue
-                record = LLMCallRecord.model_validate_json(line)
-                self.records_by_id[record.llm_call_id] = record
-                self.records_by_hash[record.request_hash] = record
+                payload = json.loads(line)
+                if "llm_call_id" in payload:
+                    record = LLMCallRecord.model_validate(payload)
+                    payload = {
+                        "id": record.llm_call_id,
+                        "request_hash": record.request_hash,
+                        "parsed": record.parsed_response,
+                        "provider": record.provider,
+                        "model": record.model,
+                        "latency_ms": record.latency_ms,
+                        "prompt_tokens": record.prompt_tokens,
+                        "completion_tokens": record.completion_tokens,
+                        "total_tokens": record.total_tokens,
+                        "estimated_cost": record.estimated_cost,
+                        "error": record.error_type,
+                    }
+                record_id = str(payload.get("id", ""))
+                request_hash = str(payload.get("request_hash", ""))
+                if record_id:
+                    self.records_by_id[record_id] = payload
+                if request_hash:
+                    self.records_by_hash[request_hash] = payload
 
     def complete(self, request: LLMRequest) -> LLMResponse:
         record = self.records_by_id.get(request.llm_call_id) or self.records_by_hash.get(
@@ -116,19 +117,20 @@ class RecordedLLMClient:
                 model=request.model,
                 error_type="missing_recorded_call",
             )
+        parsed = record.get("parsed", {})
+        if not isinstance(parsed, dict):
+            parsed = {}
         return LLMResponse(
-            content=json.dumps(record.parsed_response, sort_keys=True),
-            parsed=record.parsed_response,
-            provider=record.provider,
-            model=record.model,
-            latency_ms=record.latency_ms,
-            prompt_tokens=record.prompt_tokens,
-            completion_tokens=record.completion_tokens,
-            total_tokens=record.total_tokens,
-            estimated_cost=record.estimated_cost,
-            retry_count=record.retry_count,
-            fallback_used=record.fallback_used,
-            error_type=record.error_type,
+            content=str(record.get("content") or json.dumps(parsed, sort_keys=True)),
+            parsed=parsed,
+            provider=str(record.get("provider", request.provider)),
+            model=str(record.get("model", request.model)),
+            latency_ms=float(record.get("latency_ms", 0.0) or 0.0),
+            prompt_tokens=int(record.get("prompt_tokens", 0) or 0),
+            completion_tokens=int(record.get("completion_tokens", 0) or 0),
+            total_tokens=int(record.get("total_tokens", 0) or 0),
+            estimated_cost=float(record.get("estimated_cost", 0.0) or 0.0),
+            error_type=str(record["error"]) if record.get("error") else None,
         )
 
 
@@ -139,21 +141,32 @@ class LiteLLMClient:
     provider dependencies or API keys.
     """
 
+    def __init__(self, settings: RuntimeLLMSettings | None = None) -> None:
+        self.settings = settings
+
     def complete(self, request: LLMRequest) -> LLMResponse:
         try:
             import litellm
         except ImportError as exc:
             raise RuntimeError("install litellm to use LiteLLMClient") from exc
 
+        settings = self.settings or load_runtime_llm_settings()
+        model = settings.model or request.model
         messages = []
         if request.system_prompt:
             messages.append({"role": "system", "content": request.system_prompt})
         messages.append({"role": "user", "content": request.prompt})
         kwargs: dict[str, object] = {
-            "model": request.model,
+            "model": model,
             "messages": messages,
             "temperature": request.temperature,
         }
+        if settings.base_url:
+            kwargs["api_base"] = settings.base_url
+            if not model.startswith("openai/"):
+                kwargs["custom_llm_provider"] = "openai"
+        if settings.api_key:
+            kwargs["api_key"] = settings.api_key
         if request.require_json or request.response_schema:
             kwargs["response_format"] = {"type": "json_object"}
 
@@ -166,42 +179,21 @@ class LiteLLMClient:
         prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
         completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
         total_tokens = int(getattr(usage, "total_tokens", 0) or 0)
+        try:
+            estimated_cost = float(litellm.completion_cost(completion_response=response) or 0.0)
+        except Exception:  # Provider-specific responses may not carry pricing metadata.
+            estimated_cost = 0.0
         return LLMResponse(
             content=content,
             parsed=parsed,
             provider=request.provider,
-            model=request.model,
+            model=model,
             latency_ms=latency_ms,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
+            estimated_cost=estimated_cost,
         )
-
-
-class AgnoClient:
-    """Optional wrapper for an Agno agent/team object supplied by the caller."""
-
-    def __init__(self, agent: object) -> None:
-        self.agent = agent
-
-    def complete(self, request: LLMRequest) -> LLMResponse:
-        if not hasattr(self.agent, "run"):
-            raise RuntimeError("AgnoClient expects an object with a run(prompt) method")
-        started = time.perf_counter()
-        result = self.agent.run(request.prompt)
-        latency_ms = (time.perf_counter() - started) * 1000.0
-        content = getattr(result, "content", str(result))
-        return LLMResponse(
-            content=content,
-            parsed=_parse_json_object(content),
-            provider="agno",
-            model=request.model,
-            latency_ms=latency_ms,
-        )
-
-
-class AgnoPolicyAdapter(AgnoClient):
-    """Semantic alias for using an Agno agent as an IncentiveSpec policy backend."""
 
 
 def llm_call_record_from_response(

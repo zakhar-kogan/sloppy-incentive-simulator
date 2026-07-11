@@ -12,12 +12,14 @@ from .core import (
 )
 from .domain.incentive_spec import IncentiveSpec, load_incentive_spec
 from .domain.run import ParameterRange, RunConfig, RunSummary, StudyConfig, StudySummary
+from .llm import LiteLLMClient
 from .replay import replay_run
 from .study import run_study
 
 __all__ = [
     "CompilationError",
     "IncentiveSpec",
+    "LiteLLMClient",
     "LoadedDomainPack",
     "ParameterRange",
     "RunConfig",
