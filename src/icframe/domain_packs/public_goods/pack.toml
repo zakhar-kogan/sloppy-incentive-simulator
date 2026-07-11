@@ -1,0 +1,75 @@
+[pack]
+id = "public_goods"
+title = "Public Goods"
+description = "Shared-resource incentives, sanctions, communication, and collusion pressure."
+spec_file = "spec.toml"
+hook = "icframe.domain_packs.public_goods.hooks:PublicGoodsHooks"
+
+[study]
+single_objective = "trusted_score"
+pareto_objectives = ["social_welfare", "exploit_rate", "governance_cost"]
+
+[validation]
+golden_seeds = [7, 11, 19]
+report_metrics = ["trusted_score", "social_welfare", "exploit_rate", "governance_cost"]
+
+[[parameters]]
+id = "steps"
+label = "Rounds"
+description = "Number of public-goods rounds in one experiment."
+unit = "steps"
+type = "integer"
+default = 30
+minimum = 1
+maximum = 100000
+optimizable = false
+step = 1
+[parameters.target]
+entity = "experiment"
+field = ["steps"]
+
+[[parameters]]
+id = "learners"
+label = "Learning agents"
+description = "Number of adaptive participants sharing the public pool."
+unit = "agents"
+type = "integer"
+default = 2
+minimum = 1
+maximum = 20
+optimizable = true
+step = 1
+[parameters.target]
+entity = "population"
+entity_id = "learner"
+field = ["count"]
+
+[[parameters]]
+id = "return_multiplier"
+label = "Public return multiplier"
+description = "Multiplier applied to the shared contribution pool before distribution."
+type = "float"
+default = 1.6
+minimum = 0.1
+maximum = 4.0
+optimizable = true
+step = 0.1
+[parameters.target]
+entity = "hook_config"
+field = ["return_multiplier"]
+
+[[parameters]]
+id = "audit_probability"
+label = "Tamper audit probability"
+description = "Chance that an attempted governance tamper is audited."
+unit = "probability"
+type = "float"
+default = 0.25
+minimum = 0.0
+maximum = 1.0
+optimizable = true
+step = 0.01
+[parameters.target]
+entity = "transition"
+entity_id = "tamper"
+field = ["enforcement", "audit_probability"]

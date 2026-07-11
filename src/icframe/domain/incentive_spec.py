@@ -12,30 +12,16 @@ from .base import ICFrameModel, Scalar
 OutcomeVector = dict[str, float]
 
 
-class IncentiveSpecModel(ICFrameModel):
-    """Boundary model for TOML-backed IncentiveSpec data.
-
-    The legacy ICFrame models stay fully strict. IncentiveSpec accepts string
-    enum values from TOML, while still forbidding unknown fields and validating
-    cross-references explicitly.
-    """
+class SpecModel(ICFrameModel):
+    """Strict TOML boundary model with conventional enum coercion."""
 
     model_config = ConfigDict(strict=False, extra="forbid", validate_assignment=True)
 
 
-class PolicyBackend(StrEnum):
-    DETERMINISTIC = "deterministic"
-    STOCHASTIC_WEIGHTED = "stochastic_weighted"
-    EPSILON_GREEDY_BANDIT = "epsilon_greedy_bandit"
-    UCB_BANDIT = "ucb_bandit"
-    THOMPSON_SAMPLING_BANDIT = "thompson_sampling_bandit"
-    CONTEXTUAL_BANDIT = "contextual_bandit"
-    Q_LEARNING_SIMPLE = "q_learning_simple"
-    PETTINGZOO_EXTERNAL = "pettingzoo_external"
-    LITELLM_POLICY = "litellm_policy"
-    AGNO_POLICY = "agno_policy"
-    SCRIPTED = "scripted"
-    LLM_POLICY = "llm_policy"
+class ScheduleMode(StrEnum):
+    SEQUENTIAL_FIXED = "sequential_fixed"
+    SEQUENTIAL_RANDOM = "sequential_random"
+    PARALLEL_SIMULTANEOUS = "parallel_simultaneous"
 
 
 class Availability(StrEnum):
@@ -52,222 +38,262 @@ class NormStatus(StrEnum):
     UNKNOWN = "unknown"
 
 
-class ScheduleMode(StrEnum):
-    SEQUENTIAL_FIXED = "sequential_fixed"
-    SEQUENTIAL_RANDOM = "sequential_random"
-    PARALLEL_SIMULTANEOUS = "parallel_simultaneous"
-    STAGED = "staged"
+class PolicyKind(StrEnum):
+    DETERMINISTIC = "deterministic"
+    STOCHASTIC_WEIGHTED = "stochastic_weighted"
+    EPSILON_GREEDY = "epsilon_greedy_bandit"
+    UCB = "ucb_bandit"
+    GAUSSIAN_THOMPSON = "gaussian_thompson_bandit"
+    CONTEXTUAL = "contextual_bandit"
+    Q_LEARNING = "q_learning_simple"
+    LLM = "llm_policy"
+    EXTERNAL = "external"
 
 
 class GraphVisibility(StrEnum):
-    FULL_GRAPH = "full_graph"
-    LOCAL_GRAPH = "local_graph"
-    DISCOVERED_GRAPH = "discovered_graph"
+    FULL = "full_graph"
+    LOCAL = "local_graph"
     PROMPT_ONLY = "prompt_only"
-    BLACK_BOX = "black_box"
     NONE = "none"
 
 
 class OutcomeVisibility(StrEnum):
     FULL_NUMERIC = "full_numeric"
     OWN_SCALAR = "own_scalar"
-    SIGN_ONLY = "sign_only"
-    ORDINAL = "ordinal"
-    NOISY_NUMERIC = "noisy_numeric"
     LABEL_ONLY = "label_only"
     HIDDEN = "hidden"
-    LEARNED = "learned"
 
 
-class EffectOperation(StrEnum):
+class Operation(StrEnum):
     ADD = "add"
     MULTIPLY = "multiply"
     SET = "set"
 
 
+class EffectScope(StrEnum):
+    ACTOR = "actor"
+    TARGET = "target"
+    POPULATION = "population"
+    ALL_AGENTS = "all_agents"
+    GLOBAL = "global"
+
+
 class MetricType(StrEnum):
     SUM = "sum"
     MEAN = "mean"
-    RATE = "rate"
-    DIFFERENCE = "difference"
-    RATIO = "ratio"
-    ZSCORE_DIFFERENCE = "zscore_difference"
-    ROLLING_MEAN = "rolling_mean"
     EVENT_COUNT = "event_count"
     EVENT_RATE = "event_rate"
+    DIFFERENCE = "difference"
+    RATIO = "ratio"
+    WEIGHTED_SUM = "weighted_sum"
 
 
-class ObservabilityStream(StrEnum):
-    EVENTS = "events"
-    OBSERVATIONS = "observations"
-    POLICY_DECISIONS = "policy_decisions"
-    CONSTRAINTS = "constraints"
-    LLM_CALLS = "llm_calls"
-    METRICS = "metrics"
-    MEMORY = "memory"
+class MetricScope(StrEnum):
+    GLOBAL = "global"
+    AGENTS = "agents"
+    ALL = "all"
 
 
-class RedactionMode(StrEnum):
+class ObjectiveDirection(StrEnum):
+    MAXIMIZE = "maximize"
+    MINIMIZE = "minimize"
+
+
+class SeedReducer(StrEnum):
+    MEAN = "mean"
+    MEDIAN = "median"
+    WORST = "worst"
+    QUANTILE = "quantile"
+
+
+class ConstraintOperator(StrEnum):
+    LE = "le"
+    GE = "ge"
+
+
+class RetentionProfile(StrEnum):
+    AUDIT = "audit"
+    EXPERIMENT = "experiment"
+    TRAINING = "training"
+
+
+class PromptCapture(StrEnum):
+    NONE = "none"
+    HASH = "hash"
     FULL = "full"
-    BALANCED = "balanced"
-    HASH_ONLY = "hash_only"
-    METADATA_ONLY = "metadata_only"
 
 
-class PromptCaptureMode(StrEnum):
-    FULL = "full"
-    HASH_ONLY = "hash_only"
-    HASH_AND_REDACTED = "hash_and_redacted"
-    REDACTED = "redacted"
-
-
-class LLMResponseCaptureMode(StrEnum):
-    FULL = "full"
-    PARSED_ONLY = "parsed_only"
+class ResponseCapture(StrEnum):
+    PARSED = "parsed"
     PARSED_AND_HASH = "parsed_and_hash"
-    HASH_ONLY = "hash_only"
-    REDACTED = "redacted"
+    FULL = "full"
 
 
-class HiddenStateCaptureMode(StrEnum):
-    NEVER = "never"
-    HASH_ONLY = "hash_only"
-    REDACTED = "redacted"
+class ParameterType(StrEnum):
+    FLOAT = "float"
+    INTEGER = "integer"
+    BOOLEAN = "boolean"
+    CHOICE = "choice"
 
 
-class SpecHeader(IncentiveSpecModel):
-    version: Literal["0.2", "0.3"]
-    name: str
+class ParameterEntity(StrEnum):
+    EXPERIMENT = "experiment"
+    ARCHETYPE = "archetype"
+    POPULATION = "population"
+    TRANSITION = "transition"
+    HOOK_CONFIG = "hook_config"
+
+
+class SpecHeader(SpecModel):
+    version: Literal["0.4"]
+    name: str = Field(min_length=1)
     domain: str = "generic"
 
 
-class ExperimentConfig(IncentiveSpecModel):
+class ExperimentConfig(SpecModel):
     steps: int = Field(default=1, ge=1)
-    seeds: list[int] = Field(default_factory=lambda: [0])
-    schedule: ScheduleMode = ScheduleMode.SEQUENTIAL_RANDOM
+    seeds: list[int] = Field(default_factory=lambda: [0], min_length=1)
+    schedule: ScheduleMode = ScheduleMode.SEQUENTIAL_FIXED
+
+    @field_validator("seeds")
+    @classmethod
+    def unique_seeds(cls, value: list[int]) -> list[int]:
+        if len(value) != len(set(value)):
+            raise ValueError("experiment.seeds contains duplicates")
+        return value
 
 
-class OutcomeSpace(IncentiveSpecModel):
+class StateSpace(SpecModel):
+    initial: str
+    all: list[str] = Field(min_length=1)
+    global_values: dict[str, Scalar] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def declared_initial_state(self) -> StateSpace:
+        if self.initial not in self.all:
+            raise ValueError("states.initial must be declared in states.all")
+        if len(self.all) != len(set(self.all)):
+            raise ValueError("states.all contains duplicates")
+        return self
+
+
+class ActionSpace(SpecModel):
+    all: list[str] = Field(min_length=1)
+
+    @field_validator("all")
+    @classmethod
+    def unique_actions(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("actions.all contains duplicates")
+        return value
+
+
+class OutcomeSpace(SpecModel):
     channels: list[str] = Field(min_length=1)
 
     @field_validator("channels")
     @classmethod
-    def channels_are_unique(cls, value: list[str]) -> list[str]:
+    def unique_channels(cls, value: list[str]) -> list[str]:
         if len(value) != len(set(value)):
             raise ValueError("outcome_space.channels contains duplicates")
         return value
 
 
-class StateSpace(IncentiveSpecModel):
-    initial_global: str
-    all: list[str] = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def initial_state_is_declared(self) -> StateSpace:
-        if self.initial_global not in self.all:
-            raise ValueError("states.initial_global must be declared in states.all")
-        return self
-
-
-class ActionSpace(IncentiveSpecModel):
-    all: list[str] = Field(min_length=1)
-
-
-class VisibilityProfile(IncentiveSpecModel):
-    graph: GraphVisibility
-    observed_outcomes: OutcomeVisibility = OutcomeVisibility.HIDDEN
-    latent_outcomes: OutcomeVisibility = OutcomeVisibility.HIDDEN
-    governance_outcomes: OutcomeVisibility = OutcomeVisibility.HIDDEN
+class VisibilityProfile(SpecModel):
+    graph: GraphVisibility = GraphVisibility.PROMPT_ONLY
+    outcomes: OutcomeVisibility = OutcomeVisibility.HIDDEN
     sanctions: OutcomeVisibility = OutcomeVisibility.HIDDEN
-    audit_probabilities: OutcomeVisibility = OutcomeVisibility.HIDDEN
-    detection_probabilities: OutcomeVisibility = OutcomeVisibility.HIDDEN
-    other_agents_outcomes: OutcomeVisibility = OutcomeVisibility.HIDDEN
-    prompts: bool = False
+    prompts: bool = True
+    history_events: int = Field(default=0, ge=0, le=1000)
 
 
-class MemoryConfig(IncentiveSpecModel):
-    enabled: bool = False
-    mode: str = "discovered_graph"
-    max_events: int = Field(default=200, ge=0)
-    learn_transition_outcomes: bool = True
-    learn_audit_probabilities: bool = True
-    forgetting_rate: float = Field(default=0.0, ge=0.0, le=1.0)
-
-
-class LLMConfig(IncentiveSpecModel):
-    backend: str = "litellm"
+class LLMConfig(SpecModel):
+    provider: str = "litellm"
     model: str
     temperature: float = Field(default=0.0, ge=0.0)
-    max_context_events: int = Field(default=20, ge=0)
-    include_action_descriptions: bool = True
-    include_visible_graph: bool = True
-    include_visible_rewards: bool = False
-    require_json_action: bool = True
-    action_field: str = "action"
-    response_schema: dict[str, Any] = Field(default_factory=dict)
     system_prompt: str = ""
+    action_field: str = "action"
+    target_field: str = "target_id"
+    require_json: bool = True
 
 
-class Archetype(IncentiveSpecModel):
-    policy: PolicyBackend
+class Archetype(SpecModel):
+    policy: PolicyKind
     role: str
     visibility_profile: str
     scalarizer: dict[str, float] = Field(default_factory=dict)
-    behavior: dict[str, float] = Field(default_factory=dict)
-    memory: MemoryConfig | None = None
-    llm: LLMConfig | None = None
+    policy_config: dict[str, Any] = Field(default_factory=dict)
     initial_state: str | None = None
     initial_resources: dict[str, float] = Field(default_factory=dict)
+    attributes: dict[str, Scalar] = Field(default_factory=dict)
+    llm: LLMConfig | None = None
+
+    @model_validator(mode="after")
+    def llm_policy_has_config(self) -> Archetype:
+        if self.policy is PolicyKind.LLM and self.llm is None:
+            raise ValueError("llm_policy requires archetype.llm")
+        if self.policy is not PolicyKind.LLM and self.llm is not None:
+            raise ValueError("archetype.llm is only valid for llm_policy")
+        return self
 
 
-class PopulationEntry(IncentiveSpecModel):
+class PopulationEntry(SpecModel):
     archetype: str
     count: int = Field(ge=1)
 
 
-class ActorSelector(IncentiveSpecModel):
-    population: list[str] | str | None = None
-    archetype: list[str] | str | None = None
-    role: list[str] | str | None = None
-    attributes: dict[str, Scalar] = Field(default_factory=dict)
+class ScopedEffect(SpecModel):
+    scope: EffectScope = EffectScope.ACTOR
+    population: str | None = None
+    operation: Operation = Operation.ADD
+    values: OutcomeVector = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def population_scope_has_name(self) -> ScopedEffect:
+        if (self.scope is EffectScope.POPULATION) != (self.population is not None):
+            raise ValueError(
+                "population effects require only scope=population and population=<name>"
+            )
+        return self
 
 
-class Selector(IncentiveSpecModel):
-    actor: ActorSelector | None = None
-    target: dict[str, Scalar | list[str]] = Field(default_factory=dict)
-    task: dict[str, Scalar | list[str]] = Field(default_factory=dict)
-    global_state: dict[str, Scalar | list[str]] = Field(default_factory=dict, alias="global")
-    relation: dict[str, Scalar | list[str]] = Field(default_factory=dict)
+class StateUpdate(SpecModel):
+    scope: EffectScope
+    field: list[str] = Field(min_length=1)
+    operation: Operation = Operation.ADD
+    value: Scalar
+    population: str | None = None
+
+    @model_validator(mode="after")
+    def validate_update(self) -> StateUpdate:
+        if self.scope is EffectScope.GLOBAL and self.population is not None:
+            raise ValueError("global state updates cannot name a population")
+        if (self.scope is EffectScope.POPULATION) != (self.population is not None):
+            raise ValueError(
+                "population updates require only scope=population and population=<name>"
+            )
+        if self.operation is not Operation.SET and not isinstance(self.value, int | float):
+            raise ValueError("add and multiply state updates require numeric values")
+        return self
 
 
-class ConditionalEffect(IncentiveSpecModel):
-    priority: int = 0
-    operation: EffectOperation = EffectOperation.ADD
-    selector: Selector = Field(default_factory=Selector)
-    effects: OutcomeVector = Field(default_factory=dict)
-    effects_if_detected: OutcomeVector = Field(default_factory=dict)
-
-
-class Enforcement(IncentiveSpecModel):
+class Enforcement(SpecModel):
     audit_probability: float = Field(default=0.0, ge=0.0, le=1.0)
     detection_probability: float = Field(default=1.0, ge=0.0, le=1.0)
     false_positive_probability: float = Field(default=0.0, ge=0.0, le=1.0)
     false_negative_probability: float = Field(default=0.0, ge=0.0, le=1.0)
     enforcement_probability: float = Field(default=1.0, ge=0.0, le=1.0)
-    sanction_if_detected: OutcomeVector = Field(default_factory=dict)
-    reward_if_compliant: OutcomeVector = Field(default_factory=dict)
-    restorative_action: str | None = None
-    appeal_action: str | None = None
+    sanctions: list[ScopedEffect] = Field(default_factory=list)
+    compliance_rewards: list[ScopedEffect] = Field(default_factory=list)
+    remediation_actions: list[str] = Field(default_factory=list)
 
 
-class PromptDescription(IncentiveSpecModel):
-    public: str | None = None
-    actor_view: str | None = None
-    auditor_view: str | None = None
-    hidden_designer_note: str | None = None
+class PromptDescription(SpecModel):
+    label: str | None = None
+    description: str | None = None
 
 
-class Transition(IncentiveSpecModel):
+class Transition(SpecModel):
     model_config = ConfigDict(
         strict=False,
         extra="forbid",
@@ -281,216 +307,290 @@ class Transition(IncentiveSpecModel):
     to_state: str = Field(alias="to")
     availability: Availability = Availability.HARD_AVAILABLE
     norm_status: NormStatus = NormStatus.UNKNOWN
+    requires_target: bool = False
+    target_populations: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
-    effects: OutcomeVector = Field(default_factory=dict)
-    conditional_effects: list[ConditionalEffect] = Field(default_factory=list)
+    effects: list[ScopedEffect] = Field(default_factory=list)
+    state_updates: list[StateUpdate] = Field(default_factory=list)
     enforcement: Enforcement | None = None
     prompt: PromptDescription | None = None
-    state_updates: dict[str, Any] = Field(default_factory=dict)
-
-
-class MetricSpec(IncentiveSpecModel):
-    type: MetricType
-    channel: str | None = None
-    proxy: str | None = None
-    target: str | None = None
-    numerator: str | None = None
-    denominator: str | None = None
-    normalization: str | None = None
-    where_tags_include: list[str] = Field(default_factory=list)
-
-
-class ObservabilityRedaction(IncentiveSpecModel):
-    mode: RedactionMode = RedactionMode.BALANCED
-    prompt_capture: PromptCaptureMode = PromptCaptureMode.HASH_AND_REDACTED
-    llm_response_capture: LLMResponseCaptureMode = LLMResponseCaptureMode.PARSED_AND_HASH
-    hidden_state_capture: HiddenStateCaptureMode = HiddenStateCaptureMode.NEVER
-    hash_algorithm: Literal["sha256"] = "sha256"
-
-
-class ObservabilityReplay(IncentiveSpecModel):
-    enabled: bool = True
-    record_rng_state: bool = True
-    record_llm_calls: bool = True
-    fail_on_missing_replay_call: bool = True
-
-
-class ObservabilityExporters(IncentiveSpecModel):
-    otel: bool = False
-    langfuse: bool = False
-    mlflow: bool = False
-    litellm_callbacks: bool = False
-    agno_tracing: bool = False
-
-
-class ObservabilityConfig(IncentiveSpecModel):
-    enabled: bool = False
-    streams: list[ObservabilityStream] = Field(
-        default_factory=lambda: [
-            ObservabilityStream.EVENTS,
-            ObservabilityStream.OBSERVATIONS,
-            ObservabilityStream.POLICY_DECISIONS,
-            ObservabilityStream.CONSTRAINTS,
-            ObservabilityStream.METRICS,
-        ]
-    )
-    artifact_dir: str = ".artifacts/runs"
-    jsonl: bool = True
-    include_trace_ids: bool = True
-    include_wall_time: bool = True
-    redaction: ObservabilityRedaction = Field(default_factory=ObservabilityRedaction)
-    replay: ObservabilityReplay = Field(default_factory=ObservabilityReplay)
-    exporters: ObservabilityExporters = Field(default_factory=ObservabilityExporters)
-
-    @field_validator("streams")
-    @classmethod
-    def streams_are_unique(
-        cls,
-        value: list[ObservabilityStream],
-    ) -> list[ObservabilityStream]:
-        if len(value) != len(set(value)):
-            raise ValueError("observability.streams contains duplicates")
-        return value
-
-
-class IncentiveSpec(IncentiveSpecModel):
-    spec: SpecHeader
-    experiment: ExperimentConfig = Field(default_factory=ExperimentConfig)
-    observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
-    outcome_space: OutcomeSpace
-    states: StateSpace
-    actions: ActionSpace
-    visibility_profiles: dict[str, VisibilityProfile] = Field(default_factory=dict)
-    archetypes: dict[str, Archetype] = Field(default_factory=dict)
-    population: list[PopulationEntry] = Field(default_factory=list)
-    transitions: list[Transition] = Field(default_factory=list)
-    metrics: dict[str, MetricSpec] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def validate_references(self) -> IncentiveSpec:
-        channels = set(self.outcome_space.channels)
+    def target_contract(self) -> Transition:
+        if self.target_populations and not self.requires_target:
+            raise ValueError("target_populations requires requires_target=true")
+        return self
+
+
+class MetricSpec(SpecModel):
+    type: MetricType
+    channel: str | None = None
+    scope: MetricScope = MetricScope.ALL
+    where_tags_include: list[str] = Field(default_factory=list)
+    left: str | None = None
+    right: str | None = None
+    numerator: str | None = None
+    denominator: str | None = None
+    terms: dict[str, float] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def required_fields(self) -> MetricSpec:
+        if self.type in {MetricType.SUM, MetricType.MEAN} and self.channel is None:
+            raise ValueError(f"{self.type.value} metrics require channel")
+        if self.type is MetricType.DIFFERENCE and (self.left is None or self.right is None):
+            raise ValueError("difference metrics require left and right")
+        if self.type is MetricType.RATIO and (self.numerator is None or self.denominator is None):
+            raise ValueError("ratio metrics require numerator and denominator")
+        if self.type is MetricType.WEIGHTED_SUM and not self.terms:
+            raise ValueError("weighted_sum metrics require terms")
+        return self
+
+
+class ObjectiveSpec(SpecModel):
+    metric: str
+    direction: ObjectiveDirection = ObjectiveDirection.MAXIMIZE
+    seed_reducer: SeedReducer = SeedReducer.MEAN
+    quantile: float | None = Field(default=None, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def quantile_contract(self) -> ObjectiveSpec:
+        if self.seed_reducer is SeedReducer.QUANTILE and self.quantile is None:
+            raise ValueError("quantile reducers require quantile")
+        if self.seed_reducer is not SeedReducer.QUANTILE and self.quantile is not None:
+            raise ValueError("quantile is only valid with seed_reducer=quantile")
+        return self
+
+
+class TrustedConstraint(SpecModel):
+    metric: str
+    operator: ConstraintOperator
+    threshold: float
+    require_all_seeds: bool = True
+    seed_reducer: SeedReducer = SeedReducer.MEAN
+    quantile: float | None = Field(default=None, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def quantile_contract(self) -> TrustedConstraint:
+        if self.seed_reducer is SeedReducer.QUANTILE and self.quantile is None:
+            raise ValueError("quantile reducers require quantile")
+        if self.seed_reducer is not SeedReducer.QUANTILE and self.quantile is not None:
+            raise ValueError("quantile is only valid with seed_reducer=quantile")
+        return self
+
+
+class EvaluationConfig(SpecModel):
+    objectives: dict[str, ObjectiveSpec] = Field(default_factory=dict)
+    constraints: list[TrustedConstraint] = Field(default_factory=list)
+
+
+class RedactionConfig(SpecModel):
+    prompt_capture: PromptCapture = PromptCapture.HASH
+    response_capture: ResponseCapture = ResponseCapture.PARSED_AND_HASH
+
+
+class ObservabilityConfig(SpecModel):
+    retention: RetentionProfile = RetentionProfile.EXPERIMENT
+    sample_every_steps: int | None = Field(default=None, ge=1)
+    max_checkpoints: int = Field(default=200, ge=2, le=10_000)
+    redaction: RedactionConfig = Field(default_factory=RedactionConfig)
+
+
+class SymbolicConfig(SpecModel):
+    enabled: bool = False
+    rules: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def enabled_rules(self) -> SymbolicConfig:
+        if self.rules and not self.enabled:
+            raise ValueError("symbolic.rules requires symbolic.enabled=true")
+        return self
+
+
+class IncentiveSpec(SpecModel):
+    spec: SpecHeader
+    experiment: ExperimentConfig = Field(default_factory=ExperimentConfig)
+    states: StateSpace
+    actions: ActionSpace
+    outcome_space: OutcomeSpace
+    visibility_profiles: dict[str, VisibilityProfile]
+    archetypes: dict[str, Archetype]
+    population: list[PopulationEntry] = Field(min_length=1)
+    transitions: list[Transition] = Field(min_length=1)
+    metrics: dict[str, MetricSpec] = Field(default_factory=dict)
+    evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
+    observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
+    symbolic: SymbolicConfig = Field(default_factory=SymbolicConfig)
+    hook_config: dict[str, Scalar] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def references_are_valid(self) -> IncentiveSpec:
         states = set(self.states.all)
         actions = set(self.actions.all)
-        visibility_profiles = set(self.visibility_profiles)
-        archetypes = set(self.archetypes)
-        transition_ids = set()
+        channels = set(self.outcome_space.channels)
+        populations = set(self.archetypes)
+        transition_ids: set[str] = set()
 
         for name, archetype in self.archetypes.items():
-            unknown_channels = set(archetype.scalarizer) - channels
-            if unknown_channels:
-                raise ValueError(
-                    f"archetype {name} references undeclared channels: {sorted(unknown_channels)}"
-                )
-            if archetype.visibility_profile not in visibility_profiles:
-                raise ValueError(
-                    f"archetype {name} references unknown visibility profile "
-                    f"{archetype.visibility_profile!r}"
-                )
+            if archetype.visibility_profile not in self.visibility_profiles:
+                raise ValueError(f"archetype {name} references unknown visibility profile")
             if archetype.initial_state is not None and archetype.initial_state not in states:
                 raise ValueError(f"archetype {name} references unknown initial_state")
-            if archetype.policy in {
-                PolicyBackend.LLM_POLICY,
-                PolicyBackend.LITELLM_POLICY,
-                PolicyBackend.AGNO_POLICY,
-            }:
-                if archetype.llm is None:
-                    raise ValueError(f"archetype {name} uses an LLM policy without llm config")
-                if (
-                    archetype.policy is PolicyBackend.LITELLM_POLICY
-                    and archetype.llm.backend not in {"litellm", "mock", "recorded"}
-                ):
-                    raise ValueError(
-                        f"archetype {name} litellm_policy requires backend litellm/mock/recorded"
-                    )
-                if archetype.policy is PolicyBackend.AGNO_POLICY and archetype.llm.backend not in {
-                    "agno",
-                    "mock",
-                    "recorded",
-                }:
-                    raise ValueError(
-                        f"archetype {name} agno_policy requires backend agno/mock/recorded"
-                    )
+            unknown = set(archetype.scalarizer) - channels
+            if unknown:
+                raise ValueError(f"archetype {name} references unknown channels: {sorted(unknown)}")
 
         for entry in self.population:
-            if entry.archetype not in archetypes:
+            if entry.archetype not in self.archetypes:
                 raise ValueError(f"population references unknown archetype {entry.archetype!r}")
 
         for transition in self.transitions:
             if transition.id in transition_ids:
                 raise ValueError(f"duplicate transition id {transition.id!r}")
             transition_ids.add(transition.id)
-            if transition.from_state not in states:
-                raise ValueError(f"transition {transition.id} references unknown from state")
-            if transition.to_state not in states:
-                raise ValueError(f"transition {transition.id} references unknown to state")
+            if transition.from_state not in states or transition.to_state not in states:
+                raise ValueError(f"transition {transition.id} references an unknown state")
             if transition.action not in actions:
                 raise ValueError(f"transition {transition.id} references unknown action")
-            self._check_channels(
-                channels,
-                transition.effects,
-                f"transition {transition.id}.effects",
-            )
-            if transition.enforcement is not None:
-                self._check_channels(
-                    channels,
-                    transition.enforcement.sanction_if_detected,
-                    f"transition {transition.id}.enforcement.sanction_if_detected",
-                )
-                self._check_channels(
-                    channels,
-                    transition.enforcement.reward_if_compliant,
-                    f"transition {transition.id}.enforcement.reward_if_compliant",
-                )
-                for action in (
-                    transition.enforcement.restorative_action,
-                    transition.enforcement.appeal_action,
-                ):
-                    if action is not None and action not in actions:
-                        raise ValueError(
-                            f"transition {transition.id} enforcement references unknown action"
-                        )
-            for conditional in transition.conditional_effects:
-                self._check_channels(
-                    channels,
-                    conditional.effects,
-                    f"transition {transition.id}.conditional_effects.effects",
-                )
-                self._check_channels(
-                    channels,
-                    conditional.effects_if_detected,
-                    f"transition {transition.id}.conditional_effects.effects_if_detected",
-                )
+            if not set(transition.target_populations).issubset(populations):
+                raise ValueError(f"transition {transition.id} references unknown target population")
+            enforcement = transition.enforcement
+            effects = [
+                *transition.effects,
+                *(enforcement.sanctions if enforcement else []),
+                *(enforcement.compliance_rewards if enforcement else []),
+            ]
+            for effect in effects:
+                unknown = set(effect.values) - channels
+                if unknown:
+                    raise ValueError(
+                        f"transition {transition.id} references unknown channels: {sorted(unknown)}"
+                    )
+                if effect.population is not None and effect.population not in populations:
+                    raise ValueError(f"transition {transition.id} references unknown population")
+            for update in transition.state_updates:
+                if update.population is not None and update.population not in populations:
+                    raise ValueError(f"transition {transition.id} references unknown population")
+            if transition.enforcement:
+                unknown_actions = set(transition.enforcement.remediation_actions) - actions
+                if unknown_actions:
+                    raise ValueError(
+                        f"transition {transition.id} references unknown remediation actions"
+                    )
 
-        for name, metric in self.metrics.items():
-            for field_name in ("channel", "proxy", "target"):
-                channel = getattr(metric, field_name)
-                if (
-                    channel is not None
-                    and not channel.startswith("metric.")
-                    and channel not in channels
-                ):
-                    raise ValueError(f"metric {name} references undeclared channel {channel!r}")
-            for field_name in ("numerator", "denominator"):
-                reference = getattr(metric, field_name)
-                if (
-                    reference is not None
-                    and reference != "all_actions"
-                    and not reference.startswith("metric.")
-                    and reference not in channels
-                ):
-                    raise ValueError(f"metric {name} references undeclared value {reference!r}")
+        for metric_name, metric in self.metrics.items():
+            if metric.channel is not None and metric.channel not in channels:
+                raise ValueError(f"metric {metric_name} references unknown channel")
+        metric_names = set(self.metrics)
+        for name, objective in self.evaluation.objectives.items():
+            if objective.metric not in metric_names:
+                raise ValueError(f"objective {name} references unknown metric")
+        for constraint in self.evaluation.constraints:
+            if constraint.metric not in metric_names:
+                raise ValueError("trusted constraint references unknown metric")
         return self
 
-    @staticmethod
-    def _check_channels(channels: set[str], effects: OutcomeVector, location: str) -> None:
-        unknown_channels = set(effects) - channels
-        if unknown_channels:
-            raise ValueError(
-                f"{location} references undeclared channels: {sorted(unknown_channels)}"
-            )
+
+class ParameterTarget(SpecModel):
+    entity: ParameterEntity
+    entity_id: str | None = None
+    field: list[str] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def entity_id_contract(self) -> ParameterTarget:
+        needs_id = self.entity in {
+            ParameterEntity.ARCHETYPE,
+            ParameterEntity.POPULATION,
+            ParameterEntity.TRANSITION,
+        }
+        if needs_id != (self.entity_id is not None):
+            raise ValueError(f"{self.entity.value} targets require entity_id={needs_id}")
+        return self
+
+
+class GuidedParameter(SpecModel):
+    id: str
+    label: str
+    description: str = ""
+    unit: str | None = None
+    type: ParameterType
+    default: Scalar
+    target: ParameterTarget
+    optimizable: bool = False
+    minimum: float | int | None = None
+    maximum: float | int | None = None
+    step: float | int | None = None
+    slider: bool = True
+    choices: list[Scalar] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def bounds_match_type(self) -> GuidedParameter:
+        if self.type in {ParameterType.FLOAT, ParameterType.INTEGER}:
+            if self.minimum is None or self.maximum is None:
+                raise ValueError("numeric parameters require minimum and maximum")
+            if self.minimum > self.maximum:
+                raise ValueError("parameter minimum exceeds maximum")
+            if self.step is not None and self.step <= 0:
+                raise ValueError("numeric parameter step must be positive")
+        elif self.minimum is not None or self.maximum is not None or self.step is not None:
+            raise ValueError("only numeric parameters may define bounds or step")
+        if self.type is ParameterType.CHOICE and not self.choices:
+            raise ValueError("choice parameters require choices")
+        if self.type is not ParameterType.CHOICE and self.choices:
+            raise ValueError("choices are only valid for choice parameters")
+        return self
+
+
+class DomainPackHeader(SpecModel):
+    id: str
+    title: str
+    description: str = ""
+    spec_file: str = "spec.toml"
+    hook: str | None = None
+
+
+class StudyDefaults(SpecModel):
+    single_objective: str
+    pareto_objectives: list[str] = Field(min_length=2)
+
+
+class ValidationDefaults(SpecModel):
+    golden_seeds: list[int] = Field(min_length=1)
+    report_metrics: list[str] = Field(min_length=1)
+
+
+class DomainPackManifest(SpecModel):
+    pack: DomainPackHeader
+    study: StudyDefaults
+    validation: ValidationDefaults
+    parameters: list[GuidedParameter] = Field(default_factory=list)
+
+    @field_validator("parameters")
+    @classmethod
+    def unique_parameter_ids(cls, value: list[GuidedParameter]) -> list[GuidedParameter]:
+        ids = [item.id for item in value]
+        if len(ids) != len(set(ids)):
+            raise ValueError("domain pack parameter ids must be unique")
+        return value
 
 
 def load_incentive_spec(path: str | Path) -> IncentiveSpec:
-    with Path(path).open("rb") as file:
+    file_path = Path(path)
+    if file_path.suffix.lower() == ".json":
+        raise ValueError(
+            "legacy JSON scenarios are unsupported; migrate the scenario into an "
+            "IncentiveSpec v0.4 domain pack"
+        )
+    with file_path.open("rb") as file:
         payload = tomllib.load(file)
+    version = payload.get("spec", {}).get("version")
+    if version != "0.4":
+        raise ValueError(
+            f"{file_path} uses IncentiveSpec {version!r}; only v0.4 is supported. "
+            "Migrate the domain pack instead of relying on legacy runtime behavior."
+        )
     return IncentiveSpec.model_validate(payload)
+
+
+def load_domain_pack_manifest(path: str | Path) -> DomainPackManifest:
+    with Path(path).open("rb") as file:
+        return DomainPackManifest.model_validate(tomllib.load(file))

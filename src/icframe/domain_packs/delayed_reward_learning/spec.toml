@@ -1,0 +1,167 @@
+[spec]
+version = "0.4"
+name = "delayed_reward_learning_reference"
+domain = "learning"
+
+[experiment]
+steps = 200
+seeds = [11, 17, 29]
+schedule = "sequential_fixed"
+
+[states]
+initial = "start"
+all = ["start", "invested"]
+
+[actions]
+all = ["invest", "cash_out", "harvest", "abandon"]
+
+[outcome_space]
+channels = ["agent.payoff", "latent.long_term_value"]
+
+[visibility_profiles.full]
+graph = "full_graph"
+outcomes = "full_numeric"
+sanctions = "hidden"
+prompts = true
+history_events = 4
+
+[archetypes.epsilon_learner]
+policy = "epsilon_greedy_bandit"
+role = "learner"
+visibility_profile = "full"
+scalarizer = { "agent.payoff" = 1.0 }
+policy_config = { exploration_rate = 0.15 }
+
+[archetypes.ucb_learner]
+policy = "ucb_bandit"
+role = "learner"
+visibility_profile = "full"
+scalarizer = { "agent.payoff" = 1.0 }
+policy_config = { exploration_coefficient = 0.5 }
+
+[archetypes.thompson_learner]
+policy = "gaussian_thompson_bandit"
+role = "learner"
+visibility_profile = "full"
+scalarizer = { "agent.payoff" = 1.0 }
+policy_config = { prior_variance = 2.0 }
+
+[archetypes.contextual_learner]
+policy = "contextual_bandit"
+role = "learner"
+visibility_profile = "full"
+scalarizer = { "agent.payoff" = 1.0 }
+policy_config = { exploration_rate = 0.1, learning_rate = 0.2 }
+
+[archetypes.q_learner]
+policy = "q_learning_simple"
+role = "learner"
+visibility_profile = "full"
+scalarizer = { "agent.payoff" = 1.0 }
+policy_config = { exploration_rate = 0.15, learning_rate = 0.3, discount_factor = 0.9 }
+
+[[population]]
+archetype = "epsilon_learner"
+count = 1
+
+[[population]]
+archetype = "ucb_learner"
+count = 1
+
+[[population]]
+archetype = "thompson_learner"
+count = 1
+
+[[population]]
+archetype = "contextual_learner"
+count = 1
+
+[[population]]
+archetype = "q_learner"
+count = 1
+
+[[transitions]]
+id = "invest"
+from = "start"
+action = "invest"
+to = "invested"
+availability = "hard_available"
+norm_status = "permitted"
+tags = ["investment", "delayed_reward"]
+effects = [{ scope = "actor", values = { "agent.payoff" = -1.0, "latent.long_term_value" = 2.0 } }]
+[transitions.prompt]
+label = "Invest"
+description = "Pay a setup cost now to unlock a larger later reward."
+
+[[transitions]]
+id = "cash_out"
+from = "start"
+action = "cash_out"
+to = "start"
+availability = "hard_available"
+norm_status = "permitted"
+tags = ["short_term"]
+effects = [{ scope = "actor", values = { "agent.payoff" = 1.0, "latent.long_term_value" = -0.5 } }]
+[transitions.prompt]
+label = "Cash out"
+description = "Take a small immediate reward and remain in the initial state."
+
+[[transitions]]
+id = "harvest"
+from = "invested"
+action = "harvest"
+to = "start"
+availability = "hard_available"
+norm_status = "permitted"
+tags = ["harvest", "delayed_reward"]
+effects = [{ scope = "actor", values = { "agent.payoff" = 5.0, "latent.long_term_value" = 3.0 } }]
+[transitions.prompt]
+label = "Harvest"
+description = "Collect the delayed return from a prior investment."
+
+[[transitions]]
+id = "abandon"
+from = "invested"
+action = "abandon"
+to = "start"
+availability = "hard_available"
+norm_status = "discouraged"
+tags = ["abandon"]
+effects = [{ scope = "actor", values = { "agent.payoff" = 0.0, "latent.long_term_value" = -1.0 } }]
+[transitions.prompt]
+label = "Abandon"
+description = "Give up the investment without collecting its return."
+
+[metrics.total_payoff]
+type = "sum"
+channel = "agent.payoff"
+scope = "agents"
+
+[metrics.harvest_rate]
+type = "event_rate"
+where_tags_include = ["harvest"]
+
+[metrics.trusted_score]
+type = "weighted_sum"
+terms = { total_payoff = 1.0, harvest_rate = 10.0 }
+
+[evaluation.objectives.trusted_score]
+metric = "trusted_score"
+direction = "maximize"
+
+[evaluation.objectives.total_payoff]
+metric = "total_payoff"
+direction = "maximize"
+
+[evaluation.objectives.harvest_rate]
+metric = "harvest_rate"
+direction = "maximize"
+
+[[evaluation.constraints]]
+metric = "harvest_rate"
+operator = "ge"
+threshold = 0.0
+
+[observability]
+retention = "experiment"
+max_checkpoints = 200

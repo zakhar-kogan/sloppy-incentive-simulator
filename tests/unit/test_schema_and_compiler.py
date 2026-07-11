@@ -1,0 +1,105 @@
+from __future__ import annotations
+
+from dataclasses import replace
+
+import pytest
+from pydantic import ValidationError
+
+from icframe.core import CompilationError, compile_runtime, load_domain_pack
+from icframe.domain.incentive_spec import IncentiveSpec, load_incentive_spec
+from icframe.symbolic import SymbolicCompilation
+
+
+def test_legacy_versions_are_rejected_with_migration_message(tmp_path) -> None:
+    path = tmp_path / "legacy.toml"
+    path.write_text('[spec]\nversion = "0.3"\nname = "legacy"\n')
+    with pytest.raises(ValueError, match=r"only v0\.4.*Migrate"):
+        load_incentive_spec(path)
+    legacy_json = tmp_path / "legacy.json"
+    legacy_json.write_text("{}")
+    with pytest.raises(ValueError, match="legacy JSON scenarios are unsupported"):
+        load_incentive_spec(legacy_json)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        (("experiment", "schedule"), "staged"),
+        (("visibility_profiles", "numeric", "graph"), "neighbors_only"),
+    ],
+)
+def test_unsupported_capabilities_fail_validation(field, value) -> None:
+    payload = load_domain_pack("public_goods").spec.model_dump(mode="python", by_alias=True)
+    if field[0] == "visibility_profiles":
+        field = (field[0], next(iter(payload["visibility_profiles"])), field[-1])
+    cursor = payload
+    for segment in field[:-1]:
+        cursor = cursor[segment]
+    cursor[field[-1]] = value
+    with pytest.raises(ValidationError):
+        IncentiveSpec.model_validate(payload)
+
+
+def test_unknown_metric_selectors_are_not_silent_noops() -> None:
+    payload = load_domain_pack("public_goods").spec.model_dump(mode="python", by_alias=True)
+    payload["metrics"]["social_welfare"]["selector"] = "everyone"
+    with pytest.raises(ValidationError, match="selector"):
+        IncentiveSpec.model_validate(payload)
+
+
+def test_all_reference_packs_have_guidance_and_compile() -> None:
+    for pack_id in (
+        "public_goods",
+        "software_organization",
+        "delayed_reward_learning",
+    ):
+        pack = load_domain_pack(pack_id)
+        assert pack.manifest.parameters
+        assert pack.manifest.validation.golden_seeds
+        assert pack.spec.evaluation.constraints
+        assert compile_runtime(pack).transitions
+
+
+def test_parallel_shared_non_add_updates_are_compile_errors() -> None:
+    pack = load_domain_pack("public_goods")
+    payload = pack.spec.model_dump(mode="python", by_alias=True)
+    payload["transitions"][0]["state_updates"].append(
+        {
+            "scope": "global",
+            "field": ["pool"],
+            "operation": "set",
+            "value": 1.0,
+        }
+    )
+    with pytest.raises(CompilationError, match="non-commutative shared set"):
+        compile_runtime(replace(pack, spec=IncentiveSpec.model_validate(payload)))
+
+
+def test_agent_state_updates_are_namespaced() -> None:
+    pack = load_domain_pack("public_goods")
+    payload = pack.spec.model_dump(mode="python", by_alias=True)
+    payload["transitions"][0]["state_updates"][0]["field"] = ["balance"]
+    with pytest.raises(CompilationError, match="resources or attributes"):
+        compile_runtime(replace(pack, spec=IncentiveSpec.model_validate(payload)))
+
+
+def test_symbolic_adapter_is_invoked_once_at_compile_time(monkeypatch) -> None:
+    pack = load_domain_pack("public_goods")
+    payload = pack.spec.model_dump(mode="python", by_alias=True)
+    payload["symbolic"] = {"enabled": True, "rules": ['blocked("tamper").']}
+    calls = []
+
+    def fake_compile(spec):
+        calls.append(spec.spec.name)
+        return SymbolicCompilation(blocked={"tamper"}, reasons={"tamper": ("symbolic:test",)})
+
+    monkeypatch.setattr("icframe.symbolic.compile_symbolic", fake_compile)
+    plan = compile_runtime(replace(pack, spec=IncentiveSpec.model_validate(payload)))
+    assert calls == [pack.spec.spec.name]
+    assert plan.transitions_by_state_action[("active", "tamper")].explanation_reasons == (
+        "availability:possible_violation",
+        "norm:forbidden",
+        "symbolic:blocked",
+        "symbolic:test",
+    )
+    assert calls == [pack.spec.spec.name]

@@ -1,55 +1,31 @@
-"""ICFRAME public package surface."""
+"""ICFRAME v0.4 canonical public API."""
 
-from .adapters import (
-    PettingZooAECIncentiveEnv,
-    PettingZooIncentiveEnv,
-    PettingZooParallelIncentiveEnv,
+from .core import (
+    CompilationError,
+    LoadedDomainPack,
+    RuntimeEngine,
+    RuntimePlan,
+    compile_runtime,
+    list_domain_packs,
+    load_domain_pack,
+    run_experiment,
 )
 from .domain.incentive_spec import IncentiveSpec, load_incentive_spec
-from .domain.scenario import Scenario
-from .llm import (
-    AgnoClient,
-    AgnoPolicyAdapter,
-    FakeLLMClient,
-    LiteLLMClient,
-    LLMClient,
-    LLMRequest,
-    LLMResponse,
-    RecordedLLMClient,
-)
-from .observability import JsonlObserver
-from .replay import replay_incentive_run
-from .runtime.incentive import (
-    Observation,
-    PolicyDecision,
-    SimulationTrace,
-    choose_action,
-    compile_observation,
-    run_incentive_simulation,
-)
+from .domain.run import RunConfig, RunSummary
 
 __all__ = [
-    "AgnoClient",
-    "AgnoPolicyAdapter",
-    "FakeLLMClient",
+    "CompilationError",
     "IncentiveSpec",
-    "JsonlObserver",
-    "LLMClient",
-    "LLMRequest",
-    "LLMResponse",
-    "LiteLLMClient",
-    "Observation",
-    "PettingZooAECIncentiveEnv",
-    "PettingZooIncentiveEnv",
-    "PettingZooParallelIncentiveEnv",
-    "PolicyDecision",
-    "RecordedLLMClient",
-    "Scenario",
-    "SimulationTrace",
-    "choose_action",
-    "compile_observation",
+    "LoadedDomainPack",
+    "RunConfig",
+    "RunSummary",
+    "RuntimeEngine",
+    "RuntimePlan",
+    "compile_runtime",
+    "list_domain_packs",
+    "load_domain_pack",
     "load_incentive_spec",
-    "replay_incentive_run",
-    "run_incentive_simulation",
+    "run_experiment",
 ]
-__version__ = "0.1.0"
+
+__version__ = "0.4.0"

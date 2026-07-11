@@ -1,0 +1,212 @@
+[spec]
+version = "0.4"
+name = "public_goods_reference"
+domain = "public_goods"
+
+[experiment]
+steps = 30
+seeds = [7, 11, 19]
+schedule = "parallel_simultaneous"
+
+[states]
+initial = "active"
+all = ["active"]
+
+[states.global_values]
+round = 0
+
+[actions]
+all = ["contribute", "withhold", "signal", "tamper"]
+
+[outcome_space]
+channels = [
+  "agent.payoff",
+  "social.trust",
+  "latent.social_welfare",
+  "governance.cost"
+]
+
+[visibility_profiles.full]
+graph = "full_graph"
+outcomes = "full_numeric"
+sanctions = "full_numeric"
+prompts = true
+history_events = 8
+
+[visibility_profiles.local]
+graph = "local_graph"
+outcomes = "label_only"
+sanctions = "label_only"
+prompts = true
+history_events = 5
+
+[archetypes.cooperator]
+policy = "deterministic"
+role = "participant"
+visibility_profile = "full"
+initial_state = "active"
+initial_resources = { balance = 10.0 }
+scalarizer = { "agent.payoff" = 1.0, "latent.social_welfare" = 0.5 }
+policy_config = { preferences = ["contribute", "signal", "withhold"] }
+
+[archetypes.learner]
+policy = "epsilon_greedy_bandit"
+role = "participant"
+visibility_profile = "full"
+initial_state = "active"
+initial_resources = { balance = 10.0 }
+scalarizer = { "agent.payoff" = 1.0, "latent.social_welfare" = 0.1 }
+policy_config = { exploration_rate = 0.15 }
+
+[archetypes.opportunist]
+policy = "deterministic"
+role = "participant"
+visibility_profile = "local"
+initial_state = "active"
+initial_resources = { balance = 10.0 }
+scalarizer = { "agent.payoff" = 1.0 }
+policy_config = { preferences = ["tamper", "withhold", "contribute"] }
+
+[[population]]
+archetype = "cooperator"
+count = 1
+
+[[population]]
+archetype = "learner"
+count = 2
+
+[[population]]
+archetype = "opportunist"
+count = 1
+
+[[transitions]]
+id = "contribute"
+from = "active"
+action = "contribute"
+to = "active"
+availability = "hard_available"
+norm_status = "permitted"
+tags = ["contribution", "cooperative"]
+effects = [
+  { scope = "actor", values = { "agent.payoff" = -1.0 } },
+  { scope = "global", values = { "latent.social_welfare" = -1.0 } }
+]
+state_updates = [
+  { scope = "actor", field = ["resources", "balance"], operation = "add", value = -1.0 }
+]
+[transitions.prompt]
+label = "Contribute"
+description = "Pay one unit into the shared public pool."
+
+[[transitions]]
+id = "withhold"
+from = "active"
+action = "withhold"
+to = "active"
+availability = "hard_available"
+norm_status = "discouraged"
+tags = ["withhold"]
+effects = [{ scope = "actor", values = { "agent.payoff" = 0.0 } }]
+[transitions.prompt]
+label = "Withhold"
+description = "Keep resources instead of funding the public pool."
+
+[[transitions]]
+id = "signal"
+from = "active"
+action = "signal"
+to = "active"
+availability = "hard_available"
+norm_status = "permitted"
+requires_target = true
+target_populations = ["cooperator", "learner", "opportunist"]
+tags = ["communication"]
+effects = [
+  { scope = "actor", values = { "agent.payoff" = -0.1 } },
+  { scope = "target", values = { "social.trust" = 0.2 } }
+]
+[transitions.prompt]
+label = "Signal"
+description = "Send a costly cooperation signal to another participant."
+
+[[transitions]]
+id = "tamper"
+from = "active"
+action = "tamper"
+to = "active"
+availability = "possible_violation"
+norm_status = "forbidden"
+tags = ["exploit", "tamper", "auditable"]
+effects = [
+  { scope = "actor", values = { "agent.payoff" = 2.0 } },
+  { scope = "global", values = { "latent.social_welfare" = -2.0 } }
+]
+state_updates = [
+  { scope = "actor", field = ["resources", "balance"], operation = "add", value = 2.0 }
+]
+[transitions.enforcement]
+audit_probability = 0.25
+detection_probability = 0.8
+enforcement_probability = 1.0
+sanctions = [
+  { scope = "actor", values = { "agent.payoff" = -5.0 } },
+  { scope = "global", values = { "governance.cost" = 0.5 } }
+]
+[transitions.prompt]
+label = "Tamper"
+description = "Manipulate the accounting system for a private gain."
+
+[metrics.agent_payoff]
+type = "sum"
+channel = "agent.payoff"
+scope = "agents"
+
+[metrics.social_welfare]
+type = "sum"
+channel = "latent.social_welfare"
+scope = "global"
+
+[metrics.exploit_count]
+type = "event_count"
+where_tags_include = ["exploit"]
+
+[metrics.exploit_rate]
+type = "event_rate"
+where_tags_include = ["exploit"]
+
+[metrics.governance_cost]
+type = "sum"
+channel = "governance.cost"
+scope = "global"
+
+[metrics.trusted_score]
+type = "weighted_sum"
+terms = { social_welfare = 1.0, exploit_rate = -20.0, governance_cost = -1.0 }
+
+[evaluation.objectives.trusted_score]
+metric = "trusted_score"
+direction = "maximize"
+
+[evaluation.objectives.social_welfare]
+metric = "social_welfare"
+direction = "maximize"
+
+[evaluation.objectives.exploit_rate]
+metric = "exploit_rate"
+direction = "minimize"
+
+[evaluation.objectives.governance_cost]
+metric = "governance_cost"
+direction = "minimize"
+
+[[evaluation.constraints]]
+metric = "exploit_rate"
+operator = "le"
+threshold = 0.5
+
+[observability]
+retention = "experiment"
+max_checkpoints = 200
+
+[hook_config]
+return_multiplier = 1.6

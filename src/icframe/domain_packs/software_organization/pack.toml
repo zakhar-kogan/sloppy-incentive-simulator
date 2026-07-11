@@ -1,0 +1,60 @@
+[pack]
+id = "software_organization"
+title = "Software Organization"
+description = "Goodhart pressure, quality tradeoffs, audits, and LLM action policies."
+spec_file = "spec.toml"
+
+[study]
+single_objective = "trusted_score"
+pareto_objectives = ["customer_value", "code_quality", "exploit_rate", "governance_cost"]
+
+[validation]
+golden_seeds = [19, 23, 31]
+report_metrics = ["trusted_score", "customer_value", "code_quality", "exploit_rate"]
+
+[[parameters]]
+id = "steps"
+label = "Rounds"
+description = "Number of work cycles in one software-organization experiment."
+unit = "steps"
+type = "integer"
+default = 40
+minimum = 1
+maximum = 100000
+optimizable = false
+step = 1
+[parameters.target]
+entity = "experiment"
+field = ["steps"]
+
+[[parameters]]
+id = "proxy_agents"
+label = "Proxy-optimizing agents"
+description = "Number of agents rewarded for the visible proxy rather than hidden quality."
+unit = "agents"
+type = "integer"
+default = 2
+minimum = 1
+maximum = 20
+optimizable = true
+step = 1
+[parameters.target]
+entity = "population"
+entity_id = "proxy_optimizer"
+field = ["count"]
+
+[[parameters]]
+id = "audit_probability"
+label = "Misreport audit probability"
+description = "Chance that misleading progress reporting is audited."
+unit = "probability"
+type = "float"
+default = 0.3
+minimum = 0.0
+maximum = 1.0
+optimizable = true
+step = 0.01
+[parameters.target]
+entity = "transition"
+entity_id = "misreport_progress"
+field = ["enforcement", "audit_probability"]

@@ -1,0 +1,1 @@
+"""Software-organization reference domain."""

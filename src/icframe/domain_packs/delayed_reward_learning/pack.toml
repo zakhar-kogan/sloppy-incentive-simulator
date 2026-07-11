@@ -1,0 +1,60 @@
+[pack]
+id = "delayed_reward_learning"
+title = "Delayed Reward Learning"
+description = "Bandit and Q-learning behavior under short- and delayed-reward choices."
+spec_file = "spec.toml"
+
+[study]
+single_objective = "trusted_score"
+pareto_objectives = ["total_payoff", "harvest_rate"]
+
+[validation]
+golden_seeds = [11, 17, 29]
+report_metrics = ["trusted_score", "total_payoff", "harvest_rate"]
+
+[[parameters]]
+id = "steps"
+label = "Learning steps"
+description = "Number of decisions available to each learning policy."
+unit = "steps"
+type = "integer"
+default = 200
+minimum = 10
+maximum = 100000
+optimizable = false
+step = 1
+[parameters.target]
+entity = "experiment"
+field = ["steps"]
+
+[[parameters]]
+id = "epsilon"
+label = "Epsilon exploration"
+description = "Probability that the epsilon-greedy policy explores a random action."
+unit = "probability"
+type = "float"
+default = 0.15
+minimum = 0.0
+maximum = 1.0
+optimizable = true
+step = 0.01
+[parameters.target]
+entity = "archetype"
+entity_id = "epsilon_learner"
+field = ["policy_config", "exploration_rate"]
+
+[[parameters]]
+id = "q_learning_rate"
+label = "Q-learning rate"
+description = "Weight assigned to new reward information in Q-value updates."
+unit = "rate"
+type = "float"
+default = 0.3
+minimum = 0.01
+maximum = 1.0
+optimizable = true
+step = 0.01
+[parameters.target]
+entity = "archetype"
+entity_id = "q_learner"
+field = ["policy_config", "learning_rate"]
