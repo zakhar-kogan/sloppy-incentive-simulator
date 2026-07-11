@@ -1,0 +1,313 @@
+{
+  "$defs": {
+    "DomainPackHeader": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "hook": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hook"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "spec_file": {
+          "default": "spec.toml",
+          "title": "Spec File",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title"
+      ],
+      "title": "DomainPackHeader",
+      "type": "object"
+    },
+    "GuidedParameter": {
+      "additionalProperties": false,
+      "properties": {
+        "choices": {
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          },
+          "title": "Choices",
+          "type": "array"
+        },
+        "default": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            }
+          ],
+          "title": "Default"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "maximum": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Maximum"
+        },
+        "minimum": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Minimum"
+        },
+        "optimizable": {
+          "default": false,
+          "title": "Optimizable",
+          "type": "boolean"
+        },
+        "slider": {
+          "default": true,
+          "title": "Slider",
+          "type": "boolean"
+        },
+        "step": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Step"
+        },
+        "target": {
+          "$ref": "#/$defs/ParameterTarget"
+        },
+        "type": {
+          "$ref": "#/$defs/ParameterType"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "type",
+        "default",
+        "target"
+      ],
+      "title": "GuidedParameter",
+      "type": "object"
+    },
+    "ParameterEntity": {
+      "enum": [
+        "experiment",
+        "archetype",
+        "population",
+        "transition",
+        "hook_config"
+      ],
+      "title": "ParameterEntity",
+      "type": "string"
+    },
+    "ParameterTarget": {
+      "additionalProperties": false,
+      "properties": {
+        "entity": {
+          "$ref": "#/$defs/ParameterEntity"
+        },
+        "entity_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Entity Id"
+        },
+        "field": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Field",
+          "type": "array"
+        }
+      },
+      "required": [
+        "entity",
+        "field"
+      ],
+      "title": "ParameterTarget",
+      "type": "object"
+    },
+    "ParameterType": {
+      "enum": [
+        "float",
+        "integer",
+        "boolean",
+        "choice"
+      ],
+      "title": "ParameterType",
+      "type": "string"
+    },
+    "StudyDefaults": {
+      "additionalProperties": false,
+      "properties": {
+        "pareto_objectives": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 2,
+          "title": "Pareto Objectives",
+          "type": "array"
+        },
+        "single_objective": {
+          "title": "Single Objective",
+          "type": "string"
+        }
+      },
+      "required": [
+        "single_objective",
+        "pareto_objectives"
+      ],
+      "title": "StudyDefaults",
+      "type": "object"
+    },
+    "ValidationDefaults": {
+      "additionalProperties": false,
+      "properties": {
+        "golden_seeds": {
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 1,
+          "title": "Golden Seeds",
+          "type": "array"
+        },
+        "report_metrics": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Report Metrics",
+          "type": "array"
+        }
+      },
+      "required": [
+        "golden_seeds",
+        "report_metrics"
+      ],
+      "title": "ValidationDefaults",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "pack": {
+      "$ref": "#/$defs/DomainPackHeader"
+    },
+    "parameters": {
+      "items": {
+        "$ref": "#/$defs/GuidedParameter"
+      },
+      "title": "Parameters",
+      "type": "array"
+    },
+    "study": {
+      "$ref": "#/$defs/StudyDefaults"
+    },
+    "validation": {
+      "$ref": "#/$defs/ValidationDefaults"
+    }
+  },
+  "required": [
+    "pack",
+    "study",
+    "validation"
+  ],
+  "title": "DomainPackManifest",
+  "type": "object"
+}

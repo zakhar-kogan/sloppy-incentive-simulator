@@ -1,21 +1,17 @@
-# Benchmark ladder
+# Performance Acceptance
 
-ICFRAME should graduate scenarios in this order:
+The performance target is bounded memory rather than an unqualified events-per-second number. Run the benchmark with:
 
-1. **Spec conformance**
-   - Golden allow/forbid traces for the law engine.
-   - Regression worlds with fixed seeds.
-2. **Goodhart and reward microbenchmarks**
-   - Proxy reward increases while the trusted score drops.
-   - Reward mapping loopholes are explicitly represented.
-3. **Collusion benchmark**
-   - Reciprocal concentration must exceed isolated or scrambled-topology baselines.
-4. **System-hacking benchmark**
-   - Unauthorized evaluator or provenance tampering is detected.
-5. **Domain regressions**
-   - Public goods.
-   - Insider information or asymmetric-information exchange.
-6. **Combined stress tests**
-   - Multiple exploit classes active at once.
+```bash
+python benchmarks/benchmark_training.py --steps 100000
+```
 
-The repository currently implements the first rung and a compact public-goods microbenchmark that is sufficient to exercise the full pipeline.
+It verifies:
+
+- training summaries contain no trace or checkpoint arrays;
+- policy history remains within declared visibility bounds;
+- retained files do not grow with turns beyond normalized inputs and the final summary;
+- symbolic compilation occurs before execution and no solver object is created per turn;
+- elapsed time and peak traced memory are printed for regression tracking.
+
+PettingZoo API tests and study process determinism are part of the normal test suite.

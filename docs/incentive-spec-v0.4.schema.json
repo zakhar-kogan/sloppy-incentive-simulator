@@ -1,0 +1,1108 @@
+{
+  "$defs": {
+    "ActionSpace": {
+      "additionalProperties": false,
+      "properties": {
+        "all": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "All",
+          "type": "array"
+        }
+      },
+      "required": [
+        "all"
+      ],
+      "title": "ActionSpace",
+      "type": "object"
+    },
+    "Archetype": {
+      "additionalProperties": false,
+      "properties": {
+        "attributes": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          },
+          "title": "Attributes",
+          "type": "object"
+        },
+        "initial_resources": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Initial Resources",
+          "type": "object"
+        },
+        "initial_state": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Initial State"
+        },
+        "llm": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LLMConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "policy": {
+          "$ref": "#/$defs/PolicyKind"
+        },
+        "policy_config": {
+          "additionalProperties": true,
+          "title": "Policy Config",
+          "type": "object"
+        },
+        "role": {
+          "title": "Role",
+          "type": "string"
+        },
+        "scalarizer": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Scalarizer",
+          "type": "object"
+        },
+        "visibility_profile": {
+          "title": "Visibility Profile",
+          "type": "string"
+        }
+      },
+      "required": [
+        "policy",
+        "role",
+        "visibility_profile"
+      ],
+      "title": "Archetype",
+      "type": "object"
+    },
+    "Availability": {
+      "enum": [
+        "hard_available",
+        "hard_blocked",
+        "possible_violation"
+      ],
+      "title": "Availability",
+      "type": "string"
+    },
+    "ConstraintOperator": {
+      "enum": [
+        "le",
+        "ge"
+      ],
+      "title": "ConstraintOperator",
+      "type": "string"
+    },
+    "EffectScope": {
+      "enum": [
+        "actor",
+        "target",
+        "population",
+        "all_agents",
+        "global"
+      ],
+      "title": "EffectScope",
+      "type": "string"
+    },
+    "Enforcement": {
+      "additionalProperties": false,
+      "properties": {
+        "audit_probability": {
+          "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Audit Probability",
+          "type": "number"
+        },
+        "compliance_rewards": {
+          "items": {
+            "$ref": "#/$defs/ScopedEffect"
+          },
+          "title": "Compliance Rewards",
+          "type": "array"
+        },
+        "detection_probability": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Detection Probability",
+          "type": "number"
+        },
+        "enforcement_probability": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Enforcement Probability",
+          "type": "number"
+        },
+        "false_negative_probability": {
+          "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "False Negative Probability",
+          "type": "number"
+        },
+        "false_positive_probability": {
+          "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "False Positive Probability",
+          "type": "number"
+        },
+        "remediation_actions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Remediation Actions",
+          "type": "array"
+        },
+        "sanctions": {
+          "items": {
+            "$ref": "#/$defs/ScopedEffect"
+          },
+          "title": "Sanctions",
+          "type": "array"
+        }
+      },
+      "title": "Enforcement",
+      "type": "object"
+    },
+    "EvaluationConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "constraints": {
+          "items": {
+            "$ref": "#/$defs/TrustedConstraint"
+          },
+          "title": "Constraints",
+          "type": "array"
+        },
+        "objectives": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ObjectiveSpec"
+          },
+          "title": "Objectives",
+          "type": "object"
+        }
+      },
+      "title": "EvaluationConfig",
+      "type": "object"
+    },
+    "ExperimentConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "schedule": {
+          "$ref": "#/$defs/ScheduleMode",
+          "default": "sequential_fixed"
+        },
+        "seeds": {
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 1,
+          "title": "Seeds",
+          "type": "array"
+        },
+        "steps": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Steps",
+          "type": "integer"
+        }
+      },
+      "title": "ExperimentConfig",
+      "type": "object"
+    },
+    "GraphVisibility": {
+      "enum": [
+        "full_graph",
+        "local_graph",
+        "prompt_only",
+        "none"
+      ],
+      "title": "GraphVisibility",
+      "type": "string"
+    },
+    "LLMConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "action_field": {
+          "default": "action",
+          "title": "Action Field",
+          "type": "string"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "provider": {
+          "default": "litellm",
+          "title": "Provider",
+          "type": "string"
+        },
+        "require_json": {
+          "default": true,
+          "title": "Require Json",
+          "type": "boolean"
+        },
+        "system_prompt": {
+          "default": "",
+          "title": "System Prompt",
+          "type": "string"
+        },
+        "target_field": {
+          "default": "target_id",
+          "title": "Target Field",
+          "type": "string"
+        },
+        "temperature": {
+          "default": 0.0,
+          "minimum": 0.0,
+          "title": "Temperature",
+          "type": "number"
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "title": "LLMConfig",
+      "type": "object"
+    },
+    "MetricScope": {
+      "enum": [
+        "global",
+        "agents",
+        "all"
+      ],
+      "title": "MetricScope",
+      "type": "string"
+    },
+    "MetricSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "channel": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Channel"
+        },
+        "denominator": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Denominator"
+        },
+        "left": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Left"
+        },
+        "numerator": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Numerator"
+        },
+        "right": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Right"
+        },
+        "scope": {
+          "$ref": "#/$defs/MetricScope",
+          "default": "all"
+        },
+        "terms": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Terms",
+          "type": "object"
+        },
+        "type": {
+          "$ref": "#/$defs/MetricType"
+        },
+        "where_tags_include": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Where Tags Include",
+          "type": "array"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "MetricSpec",
+      "type": "object"
+    },
+    "MetricType": {
+      "enum": [
+        "sum",
+        "mean",
+        "event_count",
+        "event_rate",
+        "difference",
+        "ratio",
+        "weighted_sum"
+      ],
+      "title": "MetricType",
+      "type": "string"
+    },
+    "NormStatus": {
+      "enum": [
+        "permitted",
+        "forbidden",
+        "obligatory",
+        "discouraged",
+        "unknown"
+      ],
+      "title": "NormStatus",
+      "type": "string"
+    },
+    "ObjectiveDirection": {
+      "enum": [
+        "maximize",
+        "minimize"
+      ],
+      "title": "ObjectiveDirection",
+      "type": "string"
+    },
+    "ObjectiveSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "direction": {
+          "$ref": "#/$defs/ObjectiveDirection",
+          "default": "maximize"
+        },
+        "metric": {
+          "title": "Metric",
+          "type": "string"
+        },
+        "quantile": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quantile"
+        },
+        "seed_reducer": {
+          "$ref": "#/$defs/SeedReducer",
+          "default": "mean"
+        }
+      },
+      "required": [
+        "metric"
+      ],
+      "title": "ObjectiveSpec",
+      "type": "object"
+    },
+    "ObservabilityConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "max_checkpoints": {
+          "default": 200,
+          "maximum": 10000,
+          "minimum": 2,
+          "title": "Max Checkpoints",
+          "type": "integer"
+        },
+        "redaction": {
+          "$ref": "#/$defs/RedactionConfig"
+        },
+        "retention": {
+          "$ref": "#/$defs/RetentionProfile",
+          "default": "experiment"
+        },
+        "sample_every_steps": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sample Every Steps"
+        }
+      },
+      "title": "ObservabilityConfig",
+      "type": "object"
+    },
+    "Operation": {
+      "enum": [
+        "add",
+        "multiply",
+        "set"
+      ],
+      "title": "Operation",
+      "type": "string"
+    },
+    "OutcomeSpace": {
+      "additionalProperties": false,
+      "properties": {
+        "channels": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Channels",
+          "type": "array"
+        }
+      },
+      "required": [
+        "channels"
+      ],
+      "title": "OutcomeSpace",
+      "type": "object"
+    },
+    "OutcomeVisibility": {
+      "enum": [
+        "full_numeric",
+        "own_scalar",
+        "label_only",
+        "hidden"
+      ],
+      "title": "OutcomeVisibility",
+      "type": "string"
+    },
+    "PolicyKind": {
+      "enum": [
+        "deterministic",
+        "stochastic_weighted",
+        "epsilon_greedy_bandit",
+        "ucb_bandit",
+        "gaussian_thompson_bandit",
+        "contextual_bandit",
+        "q_learning_simple",
+        "llm_policy",
+        "external"
+      ],
+      "title": "PolicyKind",
+      "type": "string"
+    },
+    "PopulationEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "archetype": {
+          "title": "Archetype",
+          "type": "string"
+        },
+        "count": {
+          "minimum": 1,
+          "title": "Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "archetype",
+        "count"
+      ],
+      "title": "PopulationEntry",
+      "type": "object"
+    },
+    "PromptCapture": {
+      "enum": [
+        "none",
+        "hash",
+        "full"
+      ],
+      "title": "PromptCapture",
+      "type": "string"
+    },
+    "PromptDescription": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        }
+      },
+      "title": "PromptDescription",
+      "type": "object"
+    },
+    "RedactionConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "prompt_capture": {
+          "$ref": "#/$defs/PromptCapture",
+          "default": "hash"
+        },
+        "response_capture": {
+          "$ref": "#/$defs/ResponseCapture",
+          "default": "parsed_and_hash"
+        }
+      },
+      "title": "RedactionConfig",
+      "type": "object"
+    },
+    "ResponseCapture": {
+      "enum": [
+        "parsed",
+        "parsed_and_hash",
+        "full"
+      ],
+      "title": "ResponseCapture",
+      "type": "string"
+    },
+    "RetentionProfile": {
+      "enum": [
+        "audit",
+        "experiment",
+        "training"
+      ],
+      "title": "RetentionProfile",
+      "type": "string"
+    },
+    "ScheduleMode": {
+      "enum": [
+        "sequential_fixed",
+        "sequential_random",
+        "parallel_simultaneous"
+      ],
+      "title": "ScheduleMode",
+      "type": "string"
+    },
+    "ScopedEffect": {
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "$ref": "#/$defs/Operation",
+          "default": "add"
+        },
+        "population": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Population"
+        },
+        "scope": {
+          "$ref": "#/$defs/EffectScope",
+          "default": "actor"
+        },
+        "values": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Values",
+          "type": "object"
+        }
+      },
+      "title": "ScopedEffect",
+      "type": "object"
+    },
+    "SeedReducer": {
+      "enum": [
+        "mean",
+        "median",
+        "worst",
+        "quantile"
+      ],
+      "title": "SeedReducer",
+      "type": "string"
+    },
+    "SpecHeader": {
+      "additionalProperties": false,
+      "properties": {
+        "domain": {
+          "default": "generic",
+          "title": "Domain",
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "const": "0.4",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "name"
+      ],
+      "title": "SpecHeader",
+      "type": "object"
+    },
+    "StateSpace": {
+      "additionalProperties": false,
+      "properties": {
+        "all": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "All",
+          "type": "array"
+        },
+        "global_values": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          },
+          "title": "Global Values",
+          "type": "object"
+        },
+        "initial": {
+          "title": "Initial",
+          "type": "string"
+        }
+      },
+      "required": [
+        "initial",
+        "all"
+      ],
+      "title": "StateSpace",
+      "type": "object"
+    },
+    "StateUpdate": {
+      "additionalProperties": false,
+      "properties": {
+        "field": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Field",
+          "type": "array"
+        },
+        "operation": {
+          "$ref": "#/$defs/Operation",
+          "default": "add"
+        },
+        "population": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Population"
+        },
+        "scope": {
+          "$ref": "#/$defs/EffectScope"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            }
+          ],
+          "title": "Value"
+        }
+      },
+      "required": [
+        "scope",
+        "field",
+        "value"
+      ],
+      "title": "StateUpdate",
+      "type": "object"
+    },
+    "SymbolicConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "rules": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Rules",
+          "type": "array"
+        }
+      },
+      "title": "SymbolicConfig",
+      "type": "object"
+    },
+    "Transition": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "title": "Action",
+          "type": "string"
+        },
+        "availability": {
+          "$ref": "#/$defs/Availability",
+          "default": "hard_available"
+        },
+        "effects": {
+          "items": {
+            "$ref": "#/$defs/ScopedEffect"
+          },
+          "title": "Effects",
+          "type": "array"
+        },
+        "enforcement": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Enforcement"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "from": {
+          "title": "From",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "norm_status": {
+          "$ref": "#/$defs/NormStatus",
+          "default": "unknown"
+        },
+        "prompt": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PromptDescription"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "requires_target": {
+          "default": false,
+          "title": "Requires Target",
+          "type": "boolean"
+        },
+        "state_updates": {
+          "items": {
+            "$ref": "#/$defs/StateUpdate"
+          },
+          "title": "State Updates",
+          "type": "array"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        },
+        "target_populations": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Target Populations",
+          "type": "array"
+        },
+        "to": {
+          "title": "To",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "from",
+        "action",
+        "to"
+      ],
+      "title": "Transition",
+      "type": "object"
+    },
+    "TrustedConstraint": {
+      "additionalProperties": false,
+      "properties": {
+        "metric": {
+          "title": "Metric",
+          "type": "string"
+        },
+        "operator": {
+          "$ref": "#/$defs/ConstraintOperator"
+        },
+        "quantile": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quantile"
+        },
+        "require_all_seeds": {
+          "default": true,
+          "title": "Require All Seeds",
+          "type": "boolean"
+        },
+        "seed_reducer": {
+          "$ref": "#/$defs/SeedReducer",
+          "default": "mean"
+        },
+        "threshold": {
+          "title": "Threshold",
+          "type": "number"
+        }
+      },
+      "required": [
+        "metric",
+        "operator",
+        "threshold"
+      ],
+      "title": "TrustedConstraint",
+      "type": "object"
+    },
+    "VisibilityProfile": {
+      "additionalProperties": false,
+      "properties": {
+        "graph": {
+          "$ref": "#/$defs/GraphVisibility",
+          "default": "prompt_only"
+        },
+        "history_events": {
+          "default": 0,
+          "maximum": 1000,
+          "minimum": 0,
+          "title": "History Events",
+          "type": "integer"
+        },
+        "outcomes": {
+          "$ref": "#/$defs/OutcomeVisibility",
+          "default": "hidden"
+        },
+        "prompts": {
+          "default": true,
+          "title": "Prompts",
+          "type": "boolean"
+        },
+        "sanctions": {
+          "$ref": "#/$defs/OutcomeVisibility",
+          "default": "hidden"
+        }
+      },
+      "title": "VisibilityProfile",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "actions": {
+      "$ref": "#/$defs/ActionSpace"
+    },
+    "archetypes": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Archetype"
+      },
+      "title": "Archetypes",
+      "type": "object"
+    },
+    "evaluation": {
+      "$ref": "#/$defs/EvaluationConfig"
+    },
+    "experiment": {
+      "$ref": "#/$defs/ExperimentConfig"
+    },
+    "hook_config": {
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          }
+        ]
+      },
+      "title": "Hook Config",
+      "type": "object"
+    },
+    "metrics": {
+      "additionalProperties": {
+        "$ref": "#/$defs/MetricSpec"
+      },
+      "title": "Metrics",
+      "type": "object"
+    },
+    "observability": {
+      "$ref": "#/$defs/ObservabilityConfig"
+    },
+    "outcome_space": {
+      "$ref": "#/$defs/OutcomeSpace"
+    },
+    "population": {
+      "items": {
+        "$ref": "#/$defs/PopulationEntry"
+      },
+      "minItems": 1,
+      "title": "Population",
+      "type": "array"
+    },
+    "spec": {
+      "$ref": "#/$defs/SpecHeader"
+    },
+    "states": {
+      "$ref": "#/$defs/StateSpace"
+    },
+    "symbolic": {
+      "$ref": "#/$defs/SymbolicConfig"
+    },
+    "transitions": {
+      "items": {
+        "$ref": "#/$defs/Transition"
+      },
+      "minItems": 1,
+      "title": "Transitions",
+      "type": "array"
+    },
+    "visibility_profiles": {
+      "additionalProperties": {
+        "$ref": "#/$defs/VisibilityProfile"
+      },
+      "title": "Visibility Profiles",
+      "type": "object"
+    }
+  },
+  "required": [
+    "spec",
+    "states",
+    "actions",
+    "outcome_space",
+    "visibility_profiles",
+    "archetypes",
+    "population",
+    "transitions"
+  ],
+  "title": "IncentiveSpec",
+  "type": "object"
+}
