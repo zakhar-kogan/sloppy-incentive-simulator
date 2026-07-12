@@ -20,8 +20,12 @@ from icframe.domain.incentive_spec import (
 )
 from icframe.domain.run import (
     AgentResult,
+    AgentStatistics,
     Checkpoint,
     ConstraintResult,
+    LLMLatencyBucket,
+    LLMUsageBreakdown,
+    LLMUsageSummary,
     RunConfig,
     RunStatus,
     RunSummary,
@@ -84,7 +88,13 @@ class RuntimeEngine:
         self.policies: dict[str, Policy | None] = {}
         self.llm_client = llm_client
         self.llm_calls = 0
-        self.estimated_llm_cost = 0.0
+        self.estimated_llm_cost: float | None = 0.0
+        self.llm_usage = LLMUsageSummary(
+            latency_buckets=[
+                LLMLatencyBucket(upper_ms=upper)
+                for upper in (100, 250, 500, 1000, 2500, 5000, 10000, None)
+            ]
+        )
         self.replayable = True
         self.replay_reason: str | None = None
         self.parameters = dict(parameters or {})
@@ -94,6 +104,7 @@ class RuntimeEngine:
         self._observation_projector = ObservationProjector(plan)
         self._transition_executor = TransitionExecutor()
         self.world = self._initial_world()
+        self.agent_statistics = {agent_id: AgentStatistics() for agent_id in self.world.agents}
         self._initialize_policies()
         self._apply_hook_result(
             self.plan.hooks.initialize(
@@ -155,6 +166,7 @@ class RuntimeEngine:
                 "run_id": self.run_id,
                 "pack_id": self.plan.pack_id,
                 "pack_path": self.plan.pack_path,
+                "pack_manifest": self.plan.pack_manifest.model_dump(mode="json"),
                 "spec": self.plan.spec.model_dump(mode="json", by_alias=True),
                 "seed": self.seed,
                 "hook_hash": self.plan.hook_hash,
@@ -250,6 +262,7 @@ class RuntimeEngine:
                     resources=dict(agent.resources),
                     policy=agent.policy_kind.value,
                     policy_state=policy.snapshot() if policy is not None else {},
+                    statistics=self.agent_statistics[agent_id].model_copy(deep=True),
                 )
             )
         return RunSummary(
@@ -268,11 +281,13 @@ class RuntimeEngine:
             constraints=constraints,
             feasible=all(item.passed for item in constraints),
             action_counts=dict(sorted(self.metrics.action_counts.items())),
+            transition_counts=dict(sorted(self.metrics.transition_counts.items())),
             tag_counts=dict(sorted(self.metrics.tag_counts.items())),
             checkpoints=self.checkpoints,
             agents=agents,
             llm_calls=self.llm_calls,
             estimated_llm_cost_usd=self.estimated_llm_cost,
+            llm_usage=self.llm_usage.model_copy(deep=True),
             replayable=self.replayable,
             replay_reason=self.replay_reason,
             duration_seconds=duration_seconds,
@@ -331,6 +346,7 @@ class RuntimeEngine:
             events.append(hook_event)
 
         rewards = self._finalize_rewards(events)
+        self._update_agent_statistics(decisions, events, rewards)
         self._learn(decisions, observations, events, rewards)
         for decision in decisions:
             self.observer.decision(decision)
@@ -345,6 +361,7 @@ class RuntimeEngine:
                 step=self.world.step,
                 metrics=self.metrics.snapshot(),
                 action_counts=dict(sorted(self.metrics.action_counts.items())),
+                transition_counts=dict(sorted(self.metrics.transition_counts.items())),
                 tag_counts=dict(sorted(self.metrics.tag_counts.items())),
             )
             self.checkpoints.append(checkpoint)
@@ -487,9 +504,8 @@ class RuntimeEngine:
             failure=choice.failure,
             llm_call=choice.llm_call,
         )
-        if choice.llm_call is not None and choice.llm_call.get("performed", True):
-            self.llm_calls += 1
-            self.estimated_llm_cost += float(choice.llm_call.get("estimated_cost", 0.0) or 0.0)
+        if choice.llm_call is not None:
+            self._update_llm_usage(choice.llm_call)
         if choice.failure or choice.action is None:
             return decision, None, choice.target_id
         candidate = next(
@@ -568,6 +584,76 @@ class RuntimeEngine:
                 totals[agent_id] += reward
             event.scalar_rewards = rewards
         return totals
+
+    def _update_agent_statistics(
+        self,
+        decisions: list[PolicyDecision],
+        events: list[RuntimeEvent],
+        rewards: dict[str, float],
+    ) -> None:
+        for agent_id, reward in rewards.items():
+            self.agent_statistics[agent_id].reward += reward
+        for decision in decisions:
+            if decision.failure:
+                self.agent_statistics[decision.agent_id].failed_decisions += 1
+        for event in events:
+            if not event.counts_as_action or event.actor_id not in self.agent_statistics:
+                continue
+            statistics = self.agent_statistics[event.actor_id]
+            statistics.action_counts[event.action] = (
+                statistics.action_counts.get(event.action, 0) + 1
+            )
+            statistics.violations += len(event.violations)
+            statistics.detections += int(event.detected)
+            statistics.enforcement += int(event.enforced)
+
+    def _update_llm_usage(self, call: dict[str, Any]) -> None:
+        usage = self.llm_usage
+        usage.attempted += 1
+        self.llm_calls = usage.attempted
+        status = str(call.get("status") or ("failed" if call.get("error") else "completed"))
+        if status == "completed":
+            usage.completed += 1
+        elif status == "malformed":
+            usage.malformed += 1
+        elif status == "invalid":
+            usage.invalid += 1
+        else:
+            usage.failed += 1
+        usage.prompt_tokens += int(call.get("prompt_tokens", 0) or 0)
+        usage.completion_tokens += int(call.get("completion_tokens", 0) or 0)
+        usage.total_tokens += int(call.get("total_tokens", 0) or 0)
+        usage.retry_count += int(call.get("retry_count", 0) or 0)
+        usage.fallback_count += int(bool(call.get("fallback_used", False)))
+        cost = call.get("estimated_cost")
+        if cost is None:
+            usage.estimated_cost_usd = None
+            self.estimated_llm_cost = None
+        elif usage.estimated_cost_usd is not None:
+            usage.estimated_cost_usd += float(cost)
+            self.estimated_llm_cost = usage.estimated_cost_usd
+        provider = str(call.get("provider") or "unknown")
+        model = str(call.get("model") or "unknown")
+        key = f"{provider}:{model}"
+        breakdown = usage.breakdown.get(key)
+        if breakdown is None:
+            breakdown = LLMUsageBreakdown(provider=provider, model=model)
+            usage.breakdown[key] = breakdown
+        breakdown.calls += 1
+        breakdown.prompt_tokens += int(call.get("prompt_tokens", 0) or 0)
+        breakdown.completion_tokens += int(call.get("completion_tokens", 0) or 0)
+        breakdown.total_tokens += int(call.get("total_tokens", 0) or 0)
+        if cost is None:
+            breakdown.estimated_cost_usd = None
+        elif breakdown.estimated_cost_usd is not None:
+            breakdown.estimated_cost_usd += float(cost)
+        latency = float(call.get("latency_ms", 0.0) or 0.0)
+        for bucket in usage.latency_buckets:
+            if bucket.upper_ms is None or latency <= bucket.upper_ms:
+                bucket.count += 1
+                break
+        usage.approximate_p50_ms = _latency_percentile(usage, 0.50)
+        usage.approximate_p95_ms = _latency_percentile(usage, 0.95)
 
     def _learn(
         self,
@@ -726,3 +812,16 @@ def _apply_path(
     if not isinstance(current, int | float) or not isinstance(value, int | float):
         raise ValueError(f"numeric state operation at {'/'.join(path)} has nonnumeric data")
     cursor[leaf] = current + value if operation is Operation.ADD else current * value
+
+
+def _latency_percentile(usage: LLMUsageSummary, quantile: float) -> int | None:
+    total = sum(bucket.count for bucket in usage.latency_buckets)
+    if total == 0:
+        return None
+    threshold = max(1, math.ceil(total * quantile))
+    seen = 0
+    for bucket in usage.latency_buckets:
+        seen += bucket.count
+        if seen >= threshold:
+            return bucket.upper_ms
+    return None

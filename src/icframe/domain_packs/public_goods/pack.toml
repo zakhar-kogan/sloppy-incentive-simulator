@@ -13,6 +13,56 @@ pareto_objectives = ["social_welfare", "exploit_rate", "governance_cost"]
 golden_seeds = [7, 11, 19]
 report_metrics = ["trusted_score", "social_welfare", "exploit_rate", "governance_cost"]
 
+[report.metrics.trusted_score]
+label = "Trusted score"
+description = "Combined welfare, exploitation, and governance objective."
+unit = "score"
+format = "number"
+desired_direction = "maximize"
+category = "outcome"
+headline_order = 0
+chart_group = "outcomes"
+
+[report.metrics.social_welfare]
+label = "Social welfare"
+description = "Cumulative welfare created across the population."
+unit = "utility"
+format = "number"
+desired_direction = "maximize"
+category = "outcome"
+headline_order = 1
+chart_group = "outcomes"
+
+[report.metrics.exploit_rate]
+label = "Exploit rate"
+description = "Share of actions tagged as exploitation."
+unit = "share"
+format = "percent"
+desired_direction = "minimize"
+category = "risk"
+headline_order = 2
+chart_group = "risks"
+
+[report.metrics.governance_cost]
+label = "Governance cost"
+description = "Cumulative cost of audits and enforcement."
+unit = "utility"
+format = "number"
+desired_direction = "minimize"
+category = "cost"
+headline_order = 3
+chart_group = "risks"
+
+[[report.chart_groups]]
+id = "outcomes"
+label = "Outcomes"
+metrics = ["trusted_score", "social_welfare"]
+
+[[report.chart_groups]]
+id = "risks"
+label = "Risk and enforcement"
+metrics = ["exploit_rate", "governance_cost"]
+
 [[parameters]]
 id = "steps"
 label = "Rounds"

@@ -11,6 +11,8 @@ ICFRAME v0.4 is an integrated experimental simulator, not yet a general-purpose 
 - External MARL control through PettingZoo AEC and Parallel APIs
 - Guided public-goods, software-organization, and delayed-reward domain packs
 - Interactive exact-value experiments, configurable study ranges, catalog history, comparisons, cancellation, charts, and report export
+- Results-first Setup/Results workspaces with interpreted metrics, Mechanics projection,
+  bounded agent statistics, and redacted per-run LLM inspection
 - Single-objective and Pareto optimization across configurable seeds
 
 ## Deliberately Outside The Core
@@ -20,7 +22,7 @@ ICFRAME v0.4 is an integrated experimental simulator, not yet a general-purpose 
 - Arbitrary user code inside mechanics or policy selection
 - Dynamic per-turn ASP solving
 - Legacy Scenario/Mesa compatibility
-- Typed builder and graph-composer APIs
+- Executable social topology, typed builder, and graph-composer APIs
 - An LLM-agent framework inside the simulator core
 
 The current product stage is suitable for small audited experiments, local parameter studies, environment validation, and high-throughput bounded-memory episodes. Production-scale training orchestration is a later layer that should consume the stable core and PettingZoo contracts.

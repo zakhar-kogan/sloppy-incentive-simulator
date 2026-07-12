@@ -101,7 +101,50 @@ class Checkpoint(ICFrameModel):
     step: int
     metrics: dict[str, float] = Field(default_factory=dict)
     action_counts: dict[str, int] = Field(default_factory=dict)
+    transition_counts: dict[str, int] = Field(default_factory=dict)
     tag_counts: dict[str, int] = Field(default_factory=dict)
+
+
+class AgentStatistics(ICFrameModel):
+    action_counts: dict[str, int] = Field(default_factory=dict)
+    reward: float = 0.0
+    failed_decisions: int = 0
+    violations: int = 0
+    detections: int = 0
+    enforcement: int = 0
+
+
+class LLMUsageBreakdown(ICFrameModel):
+    provider: str
+    model: str
+    calls: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    estimated_cost_usd: float | None = 0.0
+
+
+class LLMLatencyBucket(ICFrameModel):
+    upper_ms: int | None
+    count: int = 0
+
+
+class LLMUsageSummary(ICFrameModel):
+    attempted: int = 0
+    completed: int = 0
+    failed: int = 0
+    malformed: int = 0
+    invalid: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    estimated_cost_usd: float | None = 0.0
+    retry_count: int = 0
+    fallback_count: int = 0
+    approximate_p50_ms: int | None = None
+    approximate_p95_ms: int | None = None
+    latency_buckets: list[LLMLatencyBucket] = Field(default_factory=list)
+    breakdown: dict[str, LLMUsageBreakdown] = Field(default_factory=dict)
 
 
 class AgentResult(ICFrameModel):
@@ -112,6 +155,7 @@ class AgentResult(ICFrameModel):
     resources: dict[str, float] = Field(default_factory=dict)
     policy: str
     policy_state: dict[str, object] = Field(default_factory=dict)
+    statistics: AgentStatistics = Field(default_factory=AgentStatistics)
 
 
 class RunSummary(ICFrameModel):
@@ -130,11 +174,13 @@ class RunSummary(ICFrameModel):
     constraints: list[ConstraintResult] = Field(default_factory=list)
     feasible: bool = True
     action_counts: dict[str, int] = Field(default_factory=dict)
+    transition_counts: dict[str, int] = Field(default_factory=dict)
     tag_counts: dict[str, int] = Field(default_factory=dict)
     checkpoints: list[Checkpoint] = Field(default_factory=list)
     agents: list[AgentResult] = Field(default_factory=list)
     llm_calls: int = 0
-    estimated_llm_cost_usd: float = 0.0
+    estimated_llm_cost_usd: float | None = 0.0
+    llm_usage: LLMUsageSummary = Field(default_factory=LLMUsageSummary)
     replayable: bool = True
     replay_reason: str | None = None
     duration_seconds: float = 0.0
@@ -149,7 +195,7 @@ class SeedResult(ICFrameModel):
     feasible: bool
     constraints: list[ConstraintResult] = Field(default_factory=list)
     llm_calls: int = 0
-    estimated_llm_cost_usd: float = 0.0
+    estimated_llm_cost_usd: float | None = 0.0
 
 
 class TrialRecord(ICFrameModel):
@@ -159,7 +205,7 @@ class TrialRecord(ICFrameModel):
     objective_values: dict[str, float]
     feasible: bool
     llm_calls: int = 0
-    estimated_llm_cost_usd: float = 0.0
+    estimated_llm_cost_usd: float | None = 0.0
     runtime_hash: str = ""
     hook_hash: str = ""
     state: str = "complete"

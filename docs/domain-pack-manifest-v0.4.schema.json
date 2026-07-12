@@ -178,6 +178,37 @@
       "title": "GuidedParameter",
       "type": "object"
     },
+    "MetricCategory": {
+      "enum": [
+        "outcome",
+        "rate",
+        "cost",
+        "risk",
+        "proxy",
+        "enforcement"
+      ],
+      "title": "MetricCategory",
+      "type": "string"
+    },
+    "MetricFormat": {
+      "enum": [
+        "number",
+        "integer",
+        "percent",
+        "currency",
+        "duration"
+      ],
+      "title": "MetricFormat",
+      "type": "string"
+    },
+    "ObjectiveDirection": {
+      "enum": [
+        "maximize",
+        "minimize"
+      ],
+      "title": "ObjectiveDirection",
+      "type": "string"
+    },
     "ParameterEntity": {
       "enum": [
         "experiment",
@@ -232,6 +263,130 @@
       ],
       "title": "ParameterType",
       "type": "string"
+    },
+    "ReportChartGroup": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "metrics": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Metrics",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "metrics"
+      ],
+      "title": "ReportChartGroup",
+      "type": "object"
+    },
+    "ReportConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "chart_groups": {
+          "items": {
+            "$ref": "#/$defs/ReportChartGroup"
+          },
+          "title": "Chart Groups",
+          "type": "array"
+        },
+        "metrics": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ReportMetric"
+          },
+          "title": "Metrics",
+          "type": "object"
+        }
+      },
+      "title": "ReportConfig",
+      "type": "object"
+    },
+    "ReportMetric": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "$ref": "#/$defs/MetricCategory",
+          "default": "outcome"
+        },
+        "chart_group": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chart Group"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "desired_direction": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ObjectiveDirection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "format": {
+          "$ref": "#/$defs/MetricFormat",
+          "default": "number"
+        },
+        "headline_order": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Headline Order"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        }
+      },
+      "required": [
+        "label"
+      ],
+      "title": "ReportMetric",
+      "type": "object"
     },
     "StudyDefaults": {
       "additionalProperties": false,
@@ -295,6 +450,9 @@
       },
       "title": "Parameters",
       "type": "array"
+    },
+    "report": {
+      "$ref": "#/$defs/ReportConfig"
     },
     "study": {
       "$ref": "#/$defs/StudyDefaults"

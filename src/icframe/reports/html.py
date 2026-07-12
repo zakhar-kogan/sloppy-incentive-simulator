@@ -4,6 +4,7 @@ import json
 from html import escape
 from pathlib import Path
 
+from icframe.domain.incentive_spec import DomainPackManifest, IncentiveSpec
 from icframe.domain.run import RunSummary, StudySummary
 
 from .view_models import run_view_model, study_view_model
@@ -11,8 +12,15 @@ from .view_models import run_view_model, study_view_model
 
 def render_html_report(
     value: RunSummary | StudySummary,
+    *,
+    manifest: DomainPackManifest | None = None,
+    spec: IncentiveSpec | None = None,
 ) -> str:
-    view = run_view_model(value) if isinstance(value, RunSummary) else study_view_model(value)
+    view = (
+        run_view_model(value, manifest, spec)
+        if isinstance(value, RunSummary)
+        else study_view_model(value, manifest, spec)
+    )
     payload = json.dumps(view.model_dump(mode="json"), separators=(",", ":")).replace("</", "<\\/")
     return f"""<!doctype html>
 <html lang="en">
@@ -21,32 +29,31 @@ def render_html_report(
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>{escape(view.title)} / ICFRAME</title>
   <style>
-    :root {{ color-scheme: light; --ink:#17202a; --muted:#66707c; --line:#dce1e6;
-      --paper:#f5f6f4; --surface:#fff; --green:#1b7355; --red:#b44234; --blue:#2d61a8; }}
-    * {{ box-sizing:border-box; }} body {{ margin:0; background:var(--paper); color:var(--ink);
-      font:14px/1.45 Inter,ui-sans-serif,system-ui,sans-serif; }}
-    header {{ padding:28px max(24px,calc((100vw - 1180px)/2)); background:var(--surface);
-      border-bottom:1px solid var(--line); }}
-    h1 {{ margin:3px 0 4px; font-size:28px; letter-spacing:0; }} h2 {{ font-size:16px; margin:0 0 14px; }}
-    .eyebrow,.muted {{ color:var(--muted); }} .eyebrow {{ font-size:11px; font-weight:700; text-transform:uppercase; }}
-    .status {{ float:right; padding:4px 8px; border:1px solid var(--line); border-radius:4px; font-weight:650; }}
-    main {{ max-width:1180px; margin:auto; padding:24px; }} section {{ margin-bottom:28px; }}
-    .facts,.metrics {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(145px,1fr)); border:1px solid var(--line); background:var(--surface); }}
-    .fact,.metric {{ min-height:82px; padding:14px; border-right:1px solid var(--line); }}
-    .fact:last-child,.metric:last-child {{ border-right:0; }} .label {{ color:var(--muted); font-size:12px; }}
-    .value {{ margin-top:6px; font-size:22px; font-weight:700; font-variant-numeric:tabular-nums; }}
-    table {{ width:100%; border-collapse:collapse; background:var(--surface); border:1px solid var(--line); }}
-    th,td {{ padding:10px 12px; text-align:left; border-bottom:1px solid var(--line); vertical-align:top; }}
-    th {{ color:var(--muted); font-size:11px; text-transform:uppercase; }}
-    .ok {{ color:var(--green); }} .bad {{ color:var(--red); }} .bar {{ display:flex; align-items:center; gap:10px; margin:8px 0; }}
-    .bar span {{ min-width:150px; }} .track {{ flex:1; height:8px; background:#e8ebee; }} .fill {{ height:100%; background:var(--blue); }}
-    .chart {{ min-height:260px; padding:12px; border:1px solid var(--line); background:var(--surface); }}
-    .chart svg {{ width:100%; height:240px; overflow:visible; }} .axis {{ stroke:#aab2bb; stroke-width:1; }}
-    .series {{ fill:none; stroke-width:2; }} .dot {{ stroke:var(--surface); stroke-width:1.5; }}
-    .kv {{ display:grid; grid-template-columns:minmax(90px,auto) 1fr; gap:2px 8px; }}
-    .kv span:nth-child(odd) {{ color:var(--muted); }}
-    @media(max-width:640px) {{ main {{ padding:16px; }} .facts,.metrics {{ grid-template-columns:1fr 1fr; }}
-      .fact,.metric {{ border-bottom:1px solid var(--line); }} .bar span {{ min-width:100px; }} }}
+    :root {{ color-scheme:light; --ink:#17201e; --muted:#66706d; --line:#d3dad5;
+      --paper:#f3f5f2; --surface:#fff; --green:#176b4d; --red:#b33b2e; --blue:#245d8f; }}
+    * {{ box-sizing:border-box }} body {{ margin:0; background:var(--paper); color:var(--ink);
+      font:14px/1.45 "Avenir Next",Avenir,"Segoe UI",sans-serif }}
+    header {{ padding:24px max(20px,calc((100vw - 1180px)/2)); border-bottom:1px solid var(--line);
+      background:var(--surface) }} h1 {{ margin:3px 0; font-size:26px; letter-spacing:0 }}
+    h2 {{ margin:0 0 12px; font-size:15px }} .eyebrow,.muted,.label {{ color:var(--muted) }}
+    .eyebrow {{ font-size:10px; font-weight:800; text-transform:uppercase }}
+    .status {{ float:right; padding:4px 8px; border:1px solid var(--line); font-weight:700 }}
+    main {{ max-width:1180px; margin:auto; padding:24px }} section {{ margin-bottom:30px }}
+    .grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+      border:1px solid var(--line); background:var(--surface) }}
+    .cell {{ min-height:86px; padding:14px; border-right:1px solid var(--line) }}
+    .value {{ margin-top:6px; font-size:21px; font-weight:700 }} .description {{ font-size:11px; color:var(--muted) }}
+    .findings {{ border-top:1px solid var(--line) }} .finding {{ display:grid; grid-template-columns:110px 1fr;
+      gap:16px; padding:12px 0; border-bottom:1px solid var(--line) }} .finding b {{ font-size:10px; text-transform:uppercase }}
+    .plots {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(330px,1fr)); gap:10px }}
+    .plot {{ padding:12px; border:1px solid var(--line); background:var(--surface) }}
+    svg {{ width:100%; height:190px }} .axis {{ stroke:#aeb9b2 }} polyline {{ fill:none; stroke:var(--green); stroke-width:2.5 }}
+    svg text {{ fill:var(--muted); font-size:10px }} table {{ width:100%; border-collapse:collapse; background:var(--surface) }}
+    th,td {{ padding:9px 11px; border:1px solid var(--line); text-align:left; vertical-align:top }}
+    th {{ color:var(--muted); font-size:10px; text-transform:uppercase }} .ok {{ color:var(--green) }} .bad {{ color:var(--red) }}
+    code {{ display:block; margin-top:6px; color:var(--blue); font-size:10px }}
+    @media(max-width:620px) {{ main {{ padding:15px }} .grid {{ grid-template-columns:1fr 1fr }}
+      .finding {{ grid-template-columns:1fr; gap:3px }} .plots {{ grid-template-columns:1fr }} }}
   </style>
 </head>
 <body>
@@ -56,42 +63,26 @@ def render_html_report(
   <script id="view-model" type="application/json">{payload}</script>
   <script>
     const v=JSON.parse(document.getElementById('view-model').textContent);
-    const esc=x=>String(x??'').replace(/[&<>\"']/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}}[c]));
-    const fmt=x=>Number(x).toLocaleString(undefined,{{maximumFractionDigits:4}});
+    const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));
+    const fmt=(x,f='number')=>x==null?'Unavailable':f==='percent'?Number(x).toLocaleString(undefined,{{style:'percent',maximumFractionDigits:1}}):f==='currency'?Number(x).toLocaleString(undefined,{{style:'currency',currency:'USD',maximumFractionDigits:4}}):Number(x).toLocaleString(undefined,{{maximumFractionDigits:f==='integer'?0:4}});
     const section=(title,body)=>`<section><h2>${{esc(title)}}</h2>${{body}}</section>`;
-    const cells=items=>`<div class="metrics">${{items.map(x=>`<div class="metric"><div class="label">${{esc(x.label)}}</div><div class="value">${{fmt(x.value)}}</div></div>`).join('')}}</div>`;
-    const facts=()=>`<div class="facts">${{Object.entries(v.facts).map(([k,x])=>`<div class="fact"><div class="label">${{esc(k)}}</div><div class="value">${{esc(x)}}</div></div>`).join('')}}</div>`;
-    const kv=value=>`<span class="kv">${{Object.entries(value||{{}}).map(([k,x])=>`<span>${{esc(k.replaceAll('_',' '))}}</span><b>${{esc(typeof x==='number'?fmt(x):x)}}</b>`).join('')}}</span>`;
-    const colors=['#2d61a8','#1b7355','#b44234','#8b5a2b','#6b4ca5'];
-    const lineChart=points=>{{
-      if(!points.length)return '<p class="muted">No checkpoints retained.</p>';
-      const names=[...new Set(points.flatMap(p=>Object.keys(p.values)))].slice(0,5), W=900,H=230,P=34;
-      const vals=points.flatMap(p=>names.map(n=>p.values[n]).filter(Number.isFinite));
-      const lo=Math.min(...vals,0),hi=Math.max(...vals,1),x=i=>P+i*(W-2*P)/Math.max(1,points.length-1),y=n=>H-P-(n-lo)*(H-2*P)/Math.max(1e-9,hi-lo);
-      const series=names.map((n,j)=>`<polyline class="series" stroke="${{colors[j]}}" points="${{points.filter(p=>Number.isFinite(p.values[n])).map((p,i)=>`${{x(i)}},${{y(p.values[n])}}`).join(' ')}}"/>`).join('');
-      const legend=names.map((n,j)=>`<span style="color:${{colors[j]}}">${{esc(n.replaceAll('_',' '))}}</span>`).join(' &nbsp; ');
-      return `<div class="chart"><div class="label">${{legend}}</div><svg viewBox="0 0 ${{W}} ${{H}}" role="img" aria-label="Metrics over steps"><line class="axis" x1="${{P}}" y1="${{H-P}}" x2="${{W-P}}" y2="${{H-P}}"/><line class="axis" x1="${{P}}" y1="${{P}}" x2="${{P}}" y2="${{H-P}}"/>${{series}}</svg></div>`;
-    }};
-    const objectiveChart=()=>{{
-      const names=v.objectives.slice(0,2); if(!v.trials.length||!names.length)return '<p class="muted">No completed trials.</p>';
-      const W=900,H=230,P=34,xn=names[0],yn=names[1]||names[0],xs=v.trials.map(t=>t.objectives[xn]),ys=v.trials.map(t=>t.objectives[yn]);
-      const minx=Math.min(...xs),maxx=Math.max(...xs),miny=Math.min(...ys),maxy=Math.max(...ys),x=n=>P+(n-minx)*(W-2*P)/Math.max(1e-9,maxx-minx),y=n=>H-P-(n-miny)*(H-2*P)/Math.max(1e-9,maxy-miny);
-      const dots=v.trials.map(t=>`<circle class="dot" fill="${{t.feasible?'#1b7355':'#b44234'}}" cx="${{x(t.objectives[xn])}}" cy="${{y(t.objectives[yn])}}" r="5"><title>Trial ${{t.number}}</title></circle>`).join('');
-      return `<div class="chart"><div class="label">${{esc(xn)}} vs ${{esc(yn)}}</div><svg viewBox="0 0 ${{W}} ${{H}}" role="img" aria-label="Study objectives"><line class="axis" x1="${{P}}" y1="${{H-P}}" x2="${{W-P}}" y2="${{H-P}}"/><line class="axis" x1="${{P}}" y1="${{P}}" x2="${{P}}" y2="${{H-P}}"/>${{dots}}</svg></div>`;
-    }};
-    document.getElementById('title').textContent=v.title; document.getElementById('subtitle').textContent=v.subtitle;
-    document.getElementById('status').textContent=v.status;
-    let html=section('Summary',facts());
+    const grid=items=>`<div class="grid">${{items.map(x=>`<div class="cell"><div class="label">${{esc(x.label)}}${{x.cumulative?' / cumulative':''}}</div><div class="value">${{fmt(x.value,x.format)}}</div>${{x.description?`<p class="description">${{esc(x.description)}}</p>`:''}}${{x.formula?`<code>${{esc(x.formula)}}</code>`:''}}</div>`).join('')}}</div>`;
+    const facts=()=>`<div class="grid">${{Object.entries(v.facts).map(([k,x])=>`<div class="cell"><div class="label">${{esc(k)}}</div><div class="value">${{esc(x)}}</div></div>`).join('')}}</div>`;
+    const findings=()=>`<div class="findings">${{v.findings.map(x=>`<div class="finding"><b>${{esc(x.kind)}}</b><span>${{esc(x.text)}}</span></div>`).join('')}}</div>`;
+    const table=(heads,rows)=>`<div style="overflow:auto"><table><thead><tr>${{heads.map(x=>`<th>${{esc(x)}}</th>`).join('')}}</tr></thead><tbody>${{rows.map(r=>`<tr>${{r.map(x=>`<td>${{x&&x.html?x.html:esc(x)}}</td>`).join('')}}</tr>`).join('')}}</tbody></table></div>`;
+    const plot=(metric)=>{{ const pts=v.checkpoints.filter(p=>Number.isFinite(p.values[metric.id])); if(!pts.length)return ''; const W=520,H=180,P=34,vals=pts.map(p=>p.values[metric.id]),lo=Math.min(...vals),hi=Math.max(...vals),minS=Math.min(...pts.map(p=>p.step)),maxS=Math.max(...pts.map(p=>p.step)),x=s=>P+(s-minS)*(W-2*P)/Math.max(1,maxS-minS),y=n=>H-P-(n-lo)*(H-2*P)/Math.max(1e-9,hi-lo); return `<article class="plot"><b>${{esc(metric.label)}}</b><svg viewBox="0 0 ${{W}} ${{H}}" role="img" aria-label="${{esc(metric.label)}} over steps"><line class="axis" x1="${{P}}" y1="${{H-P}}" x2="${{W-P}}" y2="${{H-P}}"/><polyline points="${{pts.map(p=>`${{x(p.step)}},${{y(p.values[metric.id])}}`).join(' ')}}"/><text x="${{P}}" y="${{H-5}}">${{minS}}</text><text text-anchor="end" x="${{W-P}}" y="${{H-5}}">${{maxS}} steps</text></svg></article>`; }};
+    document.getElementById('title').textContent=v.title; document.getElementById('subtitle').textContent=v.subtitle; document.getElementById('status').textContent=v.status;
+    let html=section('Interpretation',findings())+section(v.kind==='run'?'Run facts':'Study facts',facts());
     if(v.kind==='run'){{
-      html+=section('Trusted objectives',cells(v.objectives)); html+=section('Metrics',cells(v.metrics));
-      html+=section('Metrics over time',lineChart(v.checkpoints));
-      const max=Math.max(1,...Object.values(v.actions));
-      html+=section('Actions',Object.entries(v.actions).map(([k,x])=>`<div class="bar"><span>${{esc(k)}}</span><div class="track"><div class="fill" style="width:${{100*x/max}}%"></div></div><b>${{x}}</b></div>`).join('')||'<p class="muted">No actions retained.</p>');
-      html+=section('Constraints',`<table><thead><tr><th>Metric</th><th>Value</th><th>Rule</th><th>Result</th></tr></thead><tbody>${{v.constraints.map(x=>`<tr><td>${{esc(x.metric)}}</td><td>${{fmt(x.value)}}</td><td>${{esc(x.operator)}} ${{fmt(x.threshold)}}</td><td class="${{x.passed?'ok':'bad'}}">${{x.passed?'pass':'fail'}}</td></tr>`).join('')}}</tbody></table>`);
-      html+=section('Agents',`<table><thead><tr><th>Agent</th><th>Role</th><th>Policy</th><th>State</th><th>Resources</th></tr></thead><tbody>${{v.agents.map(x=>`<tr><td>${{esc(x.id)}}</td><td>${{esc(x.role)}}</td><td>${{esc(x.policy)}}</td><td>${{esc(x.state)}}</td><td>${{kv(x.resources)}}</td></tr>`).join('')}}</tbody></table>`);
+      html+=section('Trusted objectives',grid(v.objectives)); html+=section('Metrics',grid(v.metrics));
+      html+=section('Metrics over time',`<div class="plots">${{v.metrics.map(plot).join('')}}</div>`);
+      html+=section('Trusted constraints',table(['Metric','Value','Rule','Result'],v.constraints.map(x=>[x.label,fmt(x.value,x.format),`${{x.operator}} ${{fmt(x.threshold,x.format)}}`,{{html:`<span class="${{x.passed?'ok':'bad'}}">${{x.passed?'pass':'fail'}}</span>`}}])));
+      html+=section('Mechanics',table(['Transition','From','To','Effects','Enforcement','Run events'],v.mechanics.transitions.map(x=>[x.label,x.from_state,x.to_state,x.effects.join('; ')||'None',x.enforcement.join('; ')||'None',x.frequency])));
+      html+=section('Agents',table(['Agent','Archetype','Policy','Reward','Failures','Violations','Enforced'],v.agents.map(x=>[x.id,x.archetype,x.policy,fmt(x.reward),x.failed_decisions,x.violations,x.enforcement])));
+      if(v.has_llm)html+=section('LLM usage',grid([{{label:'Attempts',value:v.llm.attempted,format:'integer'}},{{label:'Tokens',value:v.llm.total_tokens,format:'integer'}},{{label:'Estimated cost',value:v.llm.estimated_cost_usd,format:'currency'}},{{label:'Approximate p95 latency',value:v.llm.approximate_p95_ms,format:'integer'}}]));
     }}else{{
-      html+=section('Objective space',objectiveChart());
-      html+=section('Trials',`<table><thead><tr><th>Trial</th><th>Parameters</th><th>Objectives</th><th>Feasible</th></tr></thead><tbody>${{v.trials.map(x=>`<tr><td>${{x.number}}</td><td>${{kv(x.parameters)}}</td><td>${{kv(x.objectives)}}</td><td class="${{x.feasible?'ok':'bad'}}">${{x.feasible?'yes':'no'}}</td></tr>`).join('')}}</tbody></table>`);
+      html+=section('Trials',table(['Trial','Parameters','Objectives','Feasible','State'],v.trials.map(x=>[x.number,JSON.stringify(x.parameters),JSON.stringify(x.objectives),x.feasible?'yes':'no',x.state])));
+      html+=section('Retained runs',v.retained_run_ids.length?`<ul>${{v.retained_run_ids.map(x=>`<li>${{esc(x)}}</li>`).join('')}}</ul>`:'<p class="muted">None retained.</p>');
     }}
     document.getElementById('report').innerHTML=html;
   </script>
@@ -112,6 +103,18 @@ def write_html_report(
         summary = StudySummary.model_validate_json(raw)
     else:
         raise ValueError(f"{summary_path} is not a v0.4 run or study summary")
+    spec_path = summary_path.parent / "spec.json"
+    manifest_path = summary_path.parent / "domain_pack_manifest.json"
+    if not manifest_path.exists():
+        manifest_path = summary_path.parent / "pack.json"
+    spec = IncentiveSpec.model_validate_json(spec_path.read_text()) if spec_path.exists() else None
+    manifest = (
+        DomainPackManifest.model_validate_json(manifest_path.read_text())
+        if manifest_path.exists()
+        else None
+    )
     destination = Path(output) if output is not None else summary_path.parent / "report.html"
-    destination.write_text(render_html_report(summary), encoding="utf-8")
+    destination.write_text(
+        render_html_report(summary, manifest=manifest, spec=spec), encoding="utf-8"
+    )
     return destination

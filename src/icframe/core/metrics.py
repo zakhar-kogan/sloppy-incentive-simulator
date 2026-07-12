@@ -14,6 +14,7 @@ class OnlineMetrics:
         self.metrics = metrics
         self.event_count = 0
         self.action_counts: Counter[str] = Counter()
+        self.transition_counts: Counter[str] = Counter()
         self.tag_counts: Counter[str] = Counter()
         self._sums: Counter[str] = Counter()
         self._counts: Counter[str] = Counter()
@@ -22,6 +23,7 @@ class OnlineMetrics:
         if event.counts_as_action:
             self.event_count += 1
             self.action_counts[event.action] += 1
+            self.transition_counts[event.transition_id] += 1
         self.tag_counts.update(event.tags)
         event_tags = set(event.tags)
         for metric in self.metrics:

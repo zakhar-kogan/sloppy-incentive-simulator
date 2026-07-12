@@ -8,9 +8,16 @@ from icframe.llm import LLMRequest, LLMResponse
 
 
 class DeterministicLLMClient:
-    def __init__(self, action: str, *, parsed: dict[str, object] | None = None) -> None:
+    def __init__(
+        self,
+        action: str,
+        *,
+        parsed: dict[str, object] | None = None,
+        estimated_cost: float | None = 0.0,
+    ) -> None:
         self.action = action
         self.parsed = parsed
+        self.estimated_cost = estimated_cost
         self.requests: list[LLMRequest] = []
 
     def complete(self, request: LLMRequest) -> LLMResponse:
@@ -25,6 +32,7 @@ class DeterministicLLMClient:
             parsed=parsed,
             provider=request.provider,
             model=request.model,
+            estimated_cost=self.estimated_cost,
         )
 
 
