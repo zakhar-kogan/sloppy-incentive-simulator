@@ -14,7 +14,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from icframe.artifacts import ArtifactObserver
+from pydantic import ValidationError
+
+from icframe.artifacts import ArtifactObserver, update_manifest
 from icframe.catalog import Catalog
 from icframe.core import list_domain_packs, load_domain_pack, run_experiment
 from icframe.domain.incentive_spec import IncentiveSpec, PolicyKind, RetentionProfile
@@ -27,6 +29,14 @@ from icframe.runtime_settings import (
     load_runtime_llm_settings,
 )
 from icframe.study import run_study
+from icframe.ui.request_models import (
+    ModelsRequest,
+    PaginationQuery,
+    RunRequest,
+    StudyRequest,
+    TrialRerunRequest,
+    validated_payload,
+)
 
 
 @dataclass(slots=True)
@@ -89,17 +99,21 @@ class CancellableArtifactObserver(ArtifactObserver):
 
 
 class JobManager:
-    """Only active job state is in memory; completed history comes from the catalog."""
+    """Keep active jobs and a bounded recent-job window in memory."""
 
-    def __init__(self, artifact_root: Path, workers: int = 4) -> None:
+    def __init__(
+        self, artifact_root: Path, workers: int = 4, max_completed_jobs: int = 200
+    ) -> None:
         self.artifact_root = artifact_root
         self.catalog = Catalog(artifact_root)
         self.executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="icframe-ui")
         self.jobs: dict[str, Job] = {}
         self.lock = threading.RLock()
+        self.max_completed_jobs = max(0, max_completed_jobs)
         self._recover_interrupted_manifests()
 
     def submit_run(self, payload: dict[str, Any]) -> Job:
+        payload = validated_payload(RunRequest, payload)
         job = Job(
             id=f"run_{uuid.uuid4().hex[:12]}",
             kind="run",
@@ -112,6 +126,7 @@ class JobManager:
         return job
 
     def submit_study(self, payload: dict[str, Any]) -> Job:
+        payload = validated_payload(StudyRequest, payload)
         job = Job(
             id=f"study_{uuid.uuid4().hex[:12]}",
             kind="study",
@@ -169,6 +184,7 @@ class JobManager:
                 if job.status is RunStatus.QUEUED:
                     job.status = RunStatus.CANCELLED
                 job.updated_at = time.time()
+                self._prune_completed_jobs()
             return job
 
     def close(self) -> None:
@@ -270,18 +286,26 @@ class JobManager:
             job.status = status
             job.error = error
             job.updated_at = time.time()
+            if status not in {RunStatus.QUEUED, RunStatus.RUNNING}:
+                self._prune_completed_jobs()
+
+    def _prune_completed_jobs(self) -> None:
+        completed = sorted(
+            (
+                item
+                for item in self.jobs.values()
+                if item.status not in {RunStatus.QUEUED, RunStatus.RUNNING}
+            ),
+            key=lambda item: item.updated_at,
+            reverse=True,
+        )
+        for item in completed[self.max_completed_jobs :]:
+            self.jobs.pop(item.id, None)
 
     def _mark_manifest(self, job: Job, status: RunStatus, error: str) -> None:
         directory = "runs" if job.kind == "run" else "studies"
         path = self.artifact_root / directory / job.id / "manifest.json"
-        if not path.exists():
-            return
-        try:
-            payload = json.loads(path.read_text())
-        except (OSError, json.JSONDecodeError):
-            return
-        payload.update({"status": status.value, "error": error})
-        path.write_text(json.dumps(payload, indent=2, sort_keys=True))
+        update_manifest(path, status.value, error=error)
 
     def _recover_interrupted_manifests(self) -> None:
         for kind in ("runs", "studies"):
@@ -292,9 +316,7 @@ class JobManager:
                     continue
                 if payload.get("status") != "running":
                     continue
-                payload["status"] = "interrupted"
-                payload["completed_at"] = None
-                path.write_text(json.dumps(payload, indent=2, sort_keys=True))
+                update_manifest(path, RunStatus.INTERRUPTED.value)
 
 
 def serve_ui(
@@ -344,6 +366,12 @@ class ICFrameUIHandler(BaseHTTPRequestHandler):
     server_version = "ICFrameUI/0.4"
 
     def do_GET(self) -> None:
+        try:
+            self._do_get()
+        except (ValidationError, ValueError, TypeError, KeyError) as exc:
+            self._send_error(HTTPStatus.BAD_REQUEST, _validation_message(exc))
+
+    def _do_get(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
         query = parse_qs(parsed.query)
@@ -358,9 +386,8 @@ class ICFrameUIHandler(BaseHTTPRequestHandler):
         elif path == "/api/jobs":
             self._send_json({"jobs": self.jobs.list()})
         elif path == "/api/runs":
-            limit = min(int(query.get("limit", [100])[0]), 500)
-            offset = max(int(query.get("offset", [0])[0]), 0)
-            rows = self.jobs.catalog.list_runs(limit, offset)
+            pagination = _pagination(query)
+            rows = self.jobs.catalog.list_runs(pagination.limit, pagination.offset)
             self._send_json(
                 {
                     "runs": self.jobs.catalog_rows("run", rows),
@@ -368,9 +395,8 @@ class ICFrameUIHandler(BaseHTTPRequestHandler):
                 }
             )
         elif path == "/api/studies":
-            limit = min(int(query.get("limit", [100])[0]), 500)
-            offset = max(int(query.get("offset", [0])[0]), 0)
-            rows = self.jobs.catalog.list_studies(limit, offset)
+            pagination = _pagination(query)
+            rows = self.jobs.catalog.list_studies(pagination.limit, pagination.offset)
             self._send_json(
                 {
                     "studies": self.jobs.catalog_rows("study", rows),
@@ -393,6 +419,7 @@ class ICFrameUIHandler(BaseHTTPRequestHandler):
         try:
             payload = self._read_json()
             if path == "/api/runs":
+                payload = validated_payload(RunRequest, payload)
                 requested_seeds = payload.get("seeds") or [payload.get("seed")]
                 jobs = []
                 for seed in requested_seeds:
@@ -405,11 +432,13 @@ class ICFrameUIHandler(BaseHTTPRequestHandler):
                     HTTPStatus.ACCEPTED,
                 )
             elif path == "/api/studies":
+                payload = validated_payload(StudyRequest, payload)
                 job = self.jobs.submit_study(payload)
                 self._send_json({"job": job.payload()}, HTTPStatus.ACCEPTED)
             elif path == "/api/catalog/rebuild":
                 self._send_json(self.jobs.catalog.rebuild())
             elif path == "/api/models":
+                payload = validated_payload(ModelsRequest, payload)
                 settings = load_runtime_llm_settings(
                     base_url=payload.get("base_url"),
                     api_key=payload.get("api_key"),
@@ -420,6 +449,7 @@ class ICFrameUIHandler(BaseHTTPRequestHandler):
                     {"models": fetch_openai_compatible_models(settings.base_url, settings.api_key)}
                 )
             elif path.startswith("/api/studies/") and path.endswith("/rerun"):
+                payload = validated_payload(TrialRerunRequest, payload)
                 self._rerun_trial(path, payload)
             elif path.startswith("/api/jobs/") and path.endswith("/cancel"):
                 job_id = path.removeprefix("/api/jobs/").removesuffix("/cancel").strip("/")
@@ -430,8 +460,10 @@ class ICFrameUIHandler(BaseHTTPRequestHandler):
                     self._send_json({"job": job.payload()})
             else:
                 self._send_error(HTTPStatus.NOT_FOUND, "not found")
-        except (ValueError, TypeError, KeyError) as exc:
-            self._send_error(HTTPStatus.BAD_REQUEST, str(exc))
+        except (ValidationError, ValueError, TypeError, KeyError) as exc:
+            self._send_error(HTTPStatus.BAD_REQUEST, _validation_message(exc))
+        except RuntimeError as exc:
+            self._send_error(HTTPStatus.BAD_GATEWAY, str(exc))
 
     def _job_get(self, path: str) -> None:
         job = self.jobs.get(path.removeprefix("/api/jobs/").strip("/"))
@@ -464,8 +496,19 @@ class ICFrameUIHandler(BaseHTTPRequestHandler):
             if self.jobs.catalog.get_study(study_id) is None:
                 self._send_error(HTTPStatus.NOT_FOUND, "study not found")
                 return
-            trials = self.jobs.catalog.list_trials(study_id)
-            self._send_json({"trials": [trial.model_dump(mode="json") for trial in trials]})
+            query = parse_qs(urlparse(self.path).query)
+            pagination = _pagination(query, default_limit=200)
+            trials = self.jobs.catalog.list_trials(
+                study_id, pagination.limit, pagination.offset
+            )
+            self._send_json(
+                {
+                    "trials": [trial.model_dump(mode="json") for trial in trials],
+                    "total": self.jobs.catalog.count_trials(study_id),
+                    "limit": pagination.limit,
+                    "offset": pagination.offset,
+                }
+            )
             return
         report = suffix.endswith("/report")
         study_id = suffix.removesuffix("/report").strip("/")
@@ -672,3 +715,22 @@ def _optional_int(value: Any) -> int | None:
 
 def _optional_float(value: Any) -> float | None:
     return None if value in {None, ""} else float(value)
+
+
+def _pagination(
+    query: dict[str, list[str]], *, default_limit: int = 100
+) -> PaginationQuery:
+    return PaginationQuery.model_validate(
+        {
+            "limit": query.get("limit", [str(default_limit)])[0],
+            "offset": query.get("offset", ["0"])[0],
+        }
+    )
+
+
+def _validation_message(exc: Exception) -> str:
+    if isinstance(exc, ValidationError):
+        error = exc.errors(include_url=False)[0]
+        location = ".".join(str(item) for item in error["loc"])
+        return f"{location}: {error['msg']}" if location else str(error["msg"])
+    return str(exc)

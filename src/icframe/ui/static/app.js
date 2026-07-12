@@ -193,7 +193,14 @@ function studySearchSpace() {
 }
 
 function parsedSeeds(id) {
-  const result = $(id).value.split(",").map((value) => Number.parseInt(value.trim(), 10)).filter(Number.isInteger);
+  const tokens = $(id).value.split(",").map((value) => value.trim());
+  if (tokens.some((value) => value && !/^[+-]?\d+$/.test(value))) {
+    throw new Error("Seeds must be comma-separated integers");
+  }
+  const result = tokens.filter(Boolean).map((value) => Number(value));
+  if (result.some((value) => !Number.isSafeInteger(value))) {
+    throw new Error("Seeds must be safe integers");
+  }
   if (!result.length) throw new Error("At least one integer seed is required");
   return [...new Set(result)];
 }
@@ -339,9 +346,34 @@ async function openArtifact(kind, id) {
     render(payload.view);
     $("report").href = `/api/${kind}/${id}/report`;
     $("report").classList.remove("hidden");
+    if (kind === "studies") {
+      payload.view.trials = await loadAllStudyTrials(id);
+      payload.view.trialsComplete = true;
+      payload.view.trialTotal = payload.view.trials.length;
+      render(payload.view);
+    }
   } catch (error) {
     showError(error);
   }
+}
+
+async function loadAllStudyTrials(studyId) {
+  const pageSize = 500;
+  const trials = [];
+  let total = Infinity;
+  while (trials.length < total) {
+    const payload = await api(`/api/studies/${encodeURIComponent(studyId)}/trials?limit=${pageSize}&offset=${trials.length}`);
+    total = payload.total;
+    trials.push(...payload.trials.map((trial) => ({
+      number: trial.number,
+      parameters: trial.parameters,
+      objectives: trial.objective_values,
+      feasible: trial.feasible,
+      state: trial.state,
+    })));
+    if (!payload.trials.length) break;
+  }
+  return trials;
 }
 
 function render(view) {
@@ -370,7 +402,10 @@ function renderStudy(view) {
   $("actions").innerHTML = "";
   $("constraints").innerHTML = "";
   $("agentTable").innerHTML = `<div class="empty">Open a retained run to inspect agents.</div>`;
-  $("trialTable").innerHTML = table(["Trial", "Parameters", "Objectives", "Feasible", "State", ""], view.trials.map((item) => [item.number, markup(keyValues(item.parameters)), markup(keyValues(item.objectives)), markup(`<span class="${item.feasible ? "ok" : "bad"}">${item.feasible ? "yes" : "no"}</span>`), item.state, markup(`<button class="secondary small" data-rerun="${esc(view.id)}" data-trial="${item.number}">Rerun</button>`)]));
+  const trialLabel = view.trialsComplete
+    ? `Complete trial set (${view.trialTotal})`
+    : `Summary preview (${view.trials.length} of ${view.facts.Trials})`;
+  $("trialTable").innerHTML = `<p class="meta">${esc(trialLabel)}</p>` + table(["Trial", "Parameters", "Objectives", "Feasible", "State", ""], view.trials.map((item) => [item.number, markup(keyValues(item.parameters)), markup(keyValues(item.objectives)), markup(`<span class="${item.feasible ? "ok" : "bad"}">${item.feasible ? "yes" : "no"}</span>`), item.state, markup(`<button class="secondary small" data-rerun="${esc(view.id)}" data-trial="${item.number}">Rerun</button>`)]));
   selectTab("trials");
 }
 

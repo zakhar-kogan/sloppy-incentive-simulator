@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import math
+
+import pytest
+
 from icframe import StudyConfig, run_study
 from icframe.catalog import Catalog
 from icframe.domain.incentive_spec import ObjectiveDirection, ObjectiveSpec, SeedReducer
 from icframe.domain.run import LiveLLMBudget, ParameterRange, StudyMode
-from icframe.study import _reduce_objective
+from icframe.study import _reduce_objective, _suggest_parameters
 
 
 def test_single_and_pareto_studies_share_one_trial_contract(tmp_path) -> None:
@@ -77,6 +81,61 @@ def test_study_uses_requested_parameter_range(tmp_path) -> None:
         ),
     )
     assert all(0.2 <= trial.parameters["epsilon"] <= 0.25 for trial in summary.trials)
+    assert all(
+        math.isclose(
+            trial.parameters["epsilon"] * 100,
+            round(trial.parameters["epsilon"] * 100),
+        )
+        for trial in summary.trials
+    )
+
+
+def test_study_suggestions_forward_declared_numeric_steps() -> None:
+    from icframe import load_domain_pack
+
+    pack = load_domain_pack("delayed_reward_learning")
+    parameters = {item.id: item for item in pack.manifest.parameters}
+
+    class RecordingTrial:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def suggest_float(self, name, minimum, maximum, *, step):
+            self.calls.append((name, minimum, maximum, step))
+            return minimum
+
+        def suggest_int(self, name, minimum, maximum, *, step):
+            self.calls.append((name, minimum, maximum, step))
+            return minimum
+
+    trial = RecordingTrial()
+    _suggest_parameters(
+        trial,
+        {"epsilon": parameters["epsilon"], "steps": parameters["steps"]},
+        {},
+    )
+
+    assert trial.calls == [
+        ("epsilon", 0.0, 1.0, 0.01),
+        ("steps", 10, 100000, 1),
+    ]
+
+
+def test_study_parameter_ranges_must_align_with_declared_step(tmp_path) -> None:
+    with pytest.raises(ValueError, match="search bounds do not align with its step"):
+        run_study(
+            "delayed_reward_learning",
+            StudyConfig(
+                mode=StudyMode.SINGLE,
+                objectives=["trusted_score"],
+                parameters=["epsilon"],
+                parameter_ranges={"epsilon": ParameterRange(minimum=0.205, maximum=0.25)},
+                trials=1,
+                seeds=[11],
+                workers=1,
+                artifact_root=tmp_path,
+            ),
+        )
 
 
 def test_seed_reducers_include_direction_aware_worst_and_quantile() -> None:

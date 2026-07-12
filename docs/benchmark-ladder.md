@@ -10,8 +10,7 @@ It verifies:
 
 - training summaries contain no trace or checkpoint arrays;
 - policy history remains within declared visibility bounds;
-- retained files do not grow with turns beyond normalized inputs and the final summary;
-- symbolic compilation occurs before execution and no solver object is created per turn;
 - elapsed time and peak traced memory are printed for regression tracking.
 
-PettingZoo API tests and study process determinism are part of the normal test suite.
+Artifact-retention bounds, PettingZoo API compatibility, symbolic compilation, and
+study-process determinism are covered by the normal test suite.

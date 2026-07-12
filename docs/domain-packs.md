@@ -12,8 +12,12 @@ A domain pack is a directory containing `pack.toml`, an IncentiveSpec v0.4 TOML 
 Parameter targets identify an entity type, entity ID where required, and field-path
 segments. The same declarations drive exact workbench inputs, CLI overrides, and the
 allowed Optuna search bounds. A study may narrow numeric bounds but cannot exceed the
-pack manifest. Trusted constraints are not parameter targets and cannot enter a search
-space.
+pack manifest. Numeric overrides and narrowed search bounds must align to the declared
+step, measured from the parameter minimum. Trusted constraints are not parameter targets
+and cannot enter a search space.
+
+Each archetype may appear only once in an IncentiveSpec `population` list. Set its total
+agent count on that single entry rather than splitting an archetype across entries.
 
 ## Reference Packs
 

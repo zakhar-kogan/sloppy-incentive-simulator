@@ -17,9 +17,18 @@ class Catalog:
         self.path = self.root / "catalog.sqlite3"
         self._initialize()
 
-    def upsert_run(self, summary: RunSummary) -> None:
-        with self._connect() as connection:
-            connection.execute(
+    def upsert_run(
+        self,
+        summary: RunSummary,
+        *,
+        _connection: sqlite3.Connection | None = None,
+    ) -> None:
+        if _connection is None:
+            with self._connect() as connection:
+                self.upsert_run(summary, _connection=connection)
+            return
+        connection = _connection
+        connection.execute(
                 """
                 INSERT INTO runs (
                     id, pack_id, status, seed, retention, steps, feasible,
@@ -51,18 +60,27 @@ class Catalog:
                     summary.model_dump_json(),
                 ),
             )
-            connection.execute(
-                "DELETE FROM metrics WHERE owner_type='run' AND owner_id=?",
-                (summary.run_id,),
-            )
-            connection.executemany(
-                "INSERT INTO metrics (owner_type, owner_id, name, value) VALUES ('run', ?, ?, ?)",
-                [(summary.run_id, name, value) for name, value in summary.metrics.items()],
-            )
+        connection.execute(
+            "DELETE FROM metrics WHERE owner_type='run' AND owner_id=?",
+            (summary.run_id,),
+        )
+        connection.executemany(
+            "INSERT INTO metrics (owner_type, owner_id, name, value) VALUES ('run', ?, ?, ?)",
+            [(summary.run_id, name, value) for name, value in summary.metrics.items()],
+        )
 
-    def upsert_study(self, summary: StudySummary) -> None:
-        with self._connect() as connection:
-            connection.execute(
+    def upsert_study(
+        self,
+        summary: StudySummary,
+        *,
+        _connection: sqlite3.Connection | None = None,
+    ) -> None:
+        if _connection is None:
+            with self._connect() as connection:
+                self.upsert_study(summary, _connection=connection)
+            return
+        connection = _connection
+        connection.execute(
                 """
                 INSERT INTO studies (
                     id, pack_id, status, mode, trial_count, created_at,
@@ -93,10 +111,20 @@ class Catalog:
                 ),
             )
 
-    def replace_trials(self, study_id: str, trials) -> None:
-        with self._connect() as connection:
-            connection.execute("DELETE FROM trials WHERE study_id=?", (study_id,))
-            connection.executemany(
+    def replace_trials(
+        self,
+        study_id: str,
+        trials,
+        *,
+        _connection: sqlite3.Connection | None = None,
+    ) -> None:
+        if _connection is None:
+            with self._connect() as connection:
+                self.replace_trials(study_id, trials, _connection=connection)
+            return
+        connection = _connection
+        connection.execute("DELETE FROM trials WHERE study_id=?", (study_id,))
+        connection.executemany(
                 """
                 INSERT INTO trials (
                     study_id, number, feasible, parameters_json,
@@ -215,30 +243,47 @@ class Catalog:
             ).fetchall()
         return [TrialRecord.model_validate_json(row[0]) for row in rows]
 
+    def count_trials(self, study_id: str) -> int:
+        with self._connect() as connection:
+            return int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM trials WHERE study_id=?", (study_id,)
+                ).fetchone()[0]
+            )
+
     def rebuild(self) -> dict[str, int]:
+        # Parse every authoritative artifact before modifying the existing
+        # catalog. A single malformed artifact must not destroy a usable index.
+        runs = [
+            RunSummary.model_validate_json(path.read_text())
+            for path in sorted((self.root / "runs").glob("*/summary.json"))
+        ]
+        studies: list[tuple[StudySummary, list[TrialRecord]]] = []
+        for path in sorted((self.root / "studies").glob("*/summary.json")):
+            summary = StudySummary.model_validate_json(path.read_text())
+            trial_path = path.with_name("trials.jsonl")
+            trials = (
+                [
+                    TrialRecord.model_validate_json(line)
+                    for line in trial_path.read_text().splitlines()
+                    if line.strip()
+                ]
+                if trial_path.exists()
+                else []
+            )
+            studies.append((summary, trials))
         with self._connect() as connection:
             connection.execute("DELETE FROM metrics")
             connection.execute("DELETE FROM trials")
             connection.execute("DELETE FROM runs")
             connection.execute("DELETE FROM studies")
-        run_count = 0
-        study_count = 0
-        for path in sorted((self.root / "runs").glob("*/summary.json")):
-            self.upsert_run(RunSummary.model_validate_json(path.read_text()))
-            run_count += 1
-        for path in sorted((self.root / "studies").glob("*/summary.json")):
-            summary = StudySummary.model_validate_json(path.read_text())
-            self.upsert_study(summary)
-            trial_path = path.with_name("trials.jsonl")
-            if trial_path.exists():
-                trials = [
-                    TrialRecord.model_validate_json(line)
-                    for line in trial_path.read_text().splitlines()
-                    if line.strip()
-                ]
-                self.replace_trials(summary.study_id, trials)
-            study_count += 1
-        return {"runs": run_count, "studies": study_count}
+            for summary in runs:
+                self.upsert_run(summary, _connection=connection)
+            for summary, trials in studies:
+                self.upsert_study(summary, _connection=connection)
+                if trials:
+                    self.replace_trials(summary.study_id, trials, _connection=connection)
+        return {"runs": len(runs), "studies": len(studies)}
 
     def _initialize(self) -> None:
         with self._connect() as connection:

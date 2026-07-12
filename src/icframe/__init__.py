@@ -15,6 +15,7 @@ from .domain.run import ParameterRange, RunConfig, RunSummary, StudyConfig, Stud
 from .llm import LiteLLMClient
 from .replay import replay_run
 from .study import run_study
+from .version import __version__
 
 __all__ = [
     "CompilationError",
@@ -28,6 +29,7 @@ __all__ = [
     "RuntimePlan",
     "StudyConfig",
     "StudySummary",
+    "__version__",
     "compile_runtime",
     "list_domain_packs",
     "load_domain_pack",
@@ -36,5 +38,3 @@ __all__ = [
     "run_experiment",
     "run_study",
 ]
-
-__version__ = "0.4.0"

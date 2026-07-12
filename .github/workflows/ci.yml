@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test-and-package:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+
+      - name: Install development and optional dependencies
+        run: uv sync --group dev --all-extras
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Test
+        run: uv run pytest -q
+
+      - name: Build wheel and source distribution
+        run: uv build
+
+      - name: Smoke-test installed wheel
+        shell: bash
+        run: |
+          uv venv --python "${{ matrix.python-version }}" .package-smoke
+          uv pip install --reinstall --python .package-smoke/bin/python dist/*.whl
+          .package-smoke/bin/python scripts/package_smoke.py
+          .package-smoke/bin/icframe --help

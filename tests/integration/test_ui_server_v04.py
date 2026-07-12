@@ -3,8 +3,11 @@ from __future__ import annotations
 import json
 import threading
 import time
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+import icframe.ui.server as ui_server
+from icframe.domain.run import RunStatus, StudyMode, StudySummary, TrialRecord
 from icframe.ui.server import create_server
 
 
@@ -13,6 +16,14 @@ def _request(url: str, payload=None):
     request = Request(url, data=data, headers={"Content-Type": "application/json"})
     with urlopen(request, timeout=10) as response:
         return response.status, response.headers.get_content_type(), response.read()
+
+
+def _error_request(url: str, payload=None):
+    try:
+        _request(url, payload)
+    except HTTPError as exc:
+        return exc.code, json.loads(exc.read())
+    raise AssertionError("request unexpectedly succeeded")
 
 
 def test_catalog_backed_ui_run_flow(tmp_path) -> None:
@@ -64,3 +75,91 @@ def test_catalog_backed_ui_run_flow(tmp_path) -> None:
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_ui_rejects_invalid_pagination_and_large_seed_batches(tmp_path) -> None:
+    server = create_server(host="127.0.0.1", port=0, artifact_root=tmp_path)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    try:
+        status, body = _error_request(base + "/api/runs?limit=-1")
+        assert status == 400
+        assert "limit" in body["error"]
+
+        status, body = _error_request(
+            base + "/api/runs", {"pack": "public_goods", "seeds": list(range(101))}
+        )
+        assert status == 400
+        assert "seeds" in body["error"]
+        assert server.jobs.list() == []
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_model_provider_failures_return_bad_gateway(tmp_path, monkeypatch) -> None:
+    def fail_models(base_url, api_key):
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(ui_server, "fetch_openai_compatible_models", fail_models)
+    server = create_server(host="127.0.0.1", port=0, artifact_root=tmp_path)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    try:
+        status, body = _error_request(
+            base + "/api/models",
+            {"base_url": "https://models.example/v1", "api_key": "secret"},
+        )
+        assert status == 502
+        assert body == {"error": "provider unavailable"}
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_study_trials_endpoint_is_paginated_and_ui_loads_every_page(tmp_path) -> None:
+    trials = [
+        TrialRecord(
+            number=number,
+            parameters={"rate": number},
+            seeds=[],
+            objective_values={"score": float(number)},
+            feasible=True,
+        )
+        for number in range(205)
+    ]
+    summary = StudySummary(
+        study_id="large-study",
+        pack_id="public_goods",
+        mode=StudyMode.SINGLE,
+        status=RunStatus.COMPLETED,
+        objectives=["score"],
+        parameters=["rate"],
+        seeds=[7],
+        trial_count=len(trials),
+        trials=trials[:200],
+    )
+    server = create_server(host="127.0.0.1", port=0, artifact_root=tmp_path)
+    server.jobs.catalog.upsert_study(summary)
+    server.jobs.catalog.replace_trials(summary.study_id, trials)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    try:
+        payload = json.loads(
+            _request(base + "/api/studies/large-study/trials?limit=100&offset=200")[2]
+        )
+        assert payload["total"] == 205
+        assert len(payload["trials"]) == 5
+        assert payload["trials"][0]["number"] == 200
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    app = (ui_server.Path(ui_server.__file__).parent / "static" / "app.js").read_text()
+    assert "loadAllStudyTrials" in app
+    assert "Complete trial set" in app
+    assert "/trials?limit=${pageSize}&offset=${trials.length}" in app
+    assert "Seeds must be comma-separated integers" in app

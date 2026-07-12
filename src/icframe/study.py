@@ -7,15 +7,20 @@ import time
 import uuid
 from collections.abc import Callable
 from concurrent.futures import Future, ProcessPoolExecutor
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from icframe.artifacts import ArtifactLifecycle
 from icframe.catalog import Catalog
 from icframe.core.compiler import compile_runtime, runtime_hash, trusted_evaluation_hash
 from icframe.core.engine import RuntimeEngine, run_experiment
 from icframe.core.observer import NoopObserver
-from icframe.core.packs import LoadedDomainPack, apply_parameters, load_domain_pack
+from icframe.core.packs import (
+    LoadedDomainPack,
+    _is_step_aligned,
+    apply_parameters,
+    load_domain_pack,
+)
 from icframe.domain.base import Scalar
 from icframe.domain.incentive_spec import (
     ConstraintOperator,
@@ -38,6 +43,33 @@ from icframe.llm import LiteLLMClient, LLMClient, LLMRequest, LLMResponse
 
 
 def run_study(
+    pack: LoadedDomainPack | str | Path,
+    config: StudyConfig,
+    *,
+    llm_client: LLMClient | None = None,
+    cancel_check: Callable[[], bool] | None = None,
+) -> StudySummary:
+    """Run a study and always terminalize artifacts created by this invocation."""
+    study_id = config.study_id or f"study_{uuid.uuid4().hex[:12]}"
+    effective_config = config.model_copy(update={"study_id": study_id})
+    study_dir = effective_config.artifact_root / "studies" / study_id
+    existed = study_dir.exists()
+    try:
+        return _run_study(
+            pack,
+            effective_config,
+            llm_client=llm_client,
+            cancel_check=cancel_check,
+        )
+    except Exception as exc:
+        if not existed:
+            error = f"{type(exc).__name__}: {exc}"
+            ArtifactLifecycle(study_dir / "manifest.json").fail(error)
+            _write_failed_study_summary(study_dir, error)
+        raise
+
+
+def _run_study(
     pack: LoadedDomainPack | str | Path,
     config: StudyConfig,
     *,
@@ -68,18 +100,9 @@ def run_study(
     effective_llm_client = budgeted_client or llm_client
     study_id = config.study_id or f"study_{uuid.uuid4().hex[:12]}"
     study_dir = config.artifact_root / "studies" / study_id
-    study_dir.mkdir(parents=True, exist_ok=False)
     started = time.perf_counter()
-    _write_json(
-        study_dir / "spec.json",
-        loaded.spec.model_dump(mode="json", by_alias=True),
-    )
-    _write_json(
-        study_dir / "pack.json",
-        loaded.manifest.model_dump(mode="json"),
-    )
-    _write_json(
-        study_dir / "manifest.json",
+    lifecycle = ArtifactLifecycle.start(
+        study_dir,
         {
             "study_id": study_id,
             "pack_id": loaded.id,
@@ -91,11 +114,13 @@ def run_study(
                 for name, bounds in config.parameter_ranges.items()
             },
             "seeds": config.seeds,
-            "status": "running",
-            "started_at": _now(),
             "hook_hash": loaded.hook_hash,
             "runtime_hash": runtime_hash(loaded.spec, loaded.hook_hash),
             "trusted_evaluation_hash": trusted_evaluation_hash(loaded.spec),
+        },
+        files={
+            "spec.json": loaded.spec.model_dump(mode="json", by_alias=True),
+            "pack.json": loaded.manifest.model_dump(mode="json"),
         },
     )
 
@@ -240,23 +265,67 @@ def run_study(
         },
     )
     _write_json(study_dir / "summary.json", summary.model_dump(mode="json"))
-    manifest = json.loads((study_dir / "manifest.json").read_text())
-    manifest.update(
-        {
-            "status": summary.status.value,
-            "completed_at": _now(),
-            "trial_count": len(records),
-            "best_trial": best_trial,
-            "pareto_trials": pareto_trials,
-            "retained_run_ids": retained_run_ids,
-            "artifacts": summary.artifacts,
-        }
-    )
-    _write_json(study_dir / "manifest.json", manifest)
+    terminal_fields = {
+        "trial_count": len(records),
+        "best_trial": best_trial,
+        "pareto_trials": pareto_trials,
+        "retained_run_ids": retained_run_ids,
+        "artifacts": summary.artifacts,
+    }
+    if summary.status is RunStatus.CANCELLED:
+        transitioned = lifecycle.cancel(**terminal_fields)
+    else:
+        transitioned = lifecycle.complete(**terminal_fields)
+    if not transitioned:
+        raise RuntimeError("study manifest could not be terminalized")
     catalog = Catalog(config.artifact_root)
     catalog.upsert_study(summary)
     catalog.replace_trials(study_id, records)
     return summary
+
+
+def _write_failed_study_summary(study_dir: Path, error: str) -> None:
+    manifest_path = study_dir / "manifest.json"
+    if not manifest_path.exists():
+        return
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return
+    trial_path = study_dir / "trials.jsonl"
+    records = (
+        [
+            TrialRecord.model_validate_json(line)
+            for line in trial_path.read_text().splitlines()
+            if line.strip()
+        ]
+        if trial_path.exists()
+        else []
+    )
+    summary = StudySummary(
+        study_id=manifest["study_id"],
+        pack_id=manifest["pack_id"],
+        mode=StudyMode(manifest["mode"]),
+        status=RunStatus.FAILED,
+        objectives=list(manifest.get("objectives", [])),
+        parameters=list(manifest.get("parameters", [])),
+        seeds=list(manifest.get("seeds", [])),
+        trial_count=len(records),
+        trials=records[:200],
+        duration_seconds=0.0,
+        error=error,
+        artifacts={
+            "manifest": str(manifest_path),
+            "summary": str(study_dir / "summary.json"),
+            "trials": str(trial_path),
+            "spec": str(study_dir / "spec.json"),
+            "pack": str(study_dir / "pack.json"),
+        },
+    )
+    _write_json(study_dir / "summary.json", summary.model_dump(mode="json"))
+    catalog = Catalog(study_dir.parent.parent)
+    catalog.upsert_study(summary)
+    catalog.replace_trials(summary.study_id, records)
 
 
 def _run_process_trials(
@@ -380,6 +449,7 @@ def _suggest_parameters(
                 name,
                 float(bounds.minimum if bounds else parameter.minimum),
                 float(bounds.maximum if bounds else parameter.maximum),
+                step=float(parameter.step) if parameter.step is not None else None,
             )
         elif parameter.type is ParameterType.INTEGER:
             bounds = ranges.get(name)
@@ -387,6 +457,7 @@ def _suggest_parameters(
                 name,
                 int(bounds.minimum if bounds else parameter.minimum),
                 int(bounds.maximum if bounds else parameter.maximum),
+                step=int(parameter.step) if parameter.step is not None else 1,
             )
         elif parameter.type is ParameterType.BOOLEAN:
             values[name] = trial.suggest_categorical(name, [False, True])
@@ -545,6 +616,13 @@ def _validate_study_config(pack: LoadedDomainPack, config: StudyConfig) -> None:
             raise ValueError(f"parameter {name} does not accept numeric search bounds")
         if bounds.minimum < parameter.minimum or bounds.maximum > parameter.maximum:
             raise ValueError(f"parameter {name} search bounds exceed the domain-pack bounds")
+        if parameter.step is not None:
+            minimum = float(parameter.minimum)
+            step = float(parameter.step)
+            aligned_minimum = _is_step_aligned(float(bounds.minimum), minimum, step)
+            aligned_maximum = _is_step_aligned(float(bounds.maximum), minimum, step)
+            if not aligned_minimum or not aligned_maximum:
+                raise ValueError(f"parameter {name} search bounds do not align with its step")
     has_llm = any(
         archetype.policy.value == "llm_policy" for archetype in pack.spec.archetypes.values()
     )
@@ -598,7 +676,3 @@ def _write_json(path: Path, payload: Any) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(payload, indent=2, sort_keys=True))
     temporary.replace(path)
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat()

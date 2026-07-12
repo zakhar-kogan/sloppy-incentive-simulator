@@ -21,6 +21,14 @@ def _engine(pack_id: str, seed: int, **parameters) -> RuntimeEngine:
     )
 
 
+def test_parameter_overrides_must_align_with_declared_step() -> None:
+    pack = load_domain_pack("delayed_reward_learning")
+
+    apply_parameters(pack, {"epsilon": 0.24})
+    with pytest.raises(ValueError, match="epsilon does not align with its step"):
+        apply_parameters(pack, {"epsilon": 0.245})
+
+
 def test_fixed_and_random_schedules_are_reproducible() -> None:
     for pack_id in ("delayed_reward_learning", "software_organization"):
         left = _engine(pack_id, 83, steps=12).run()
@@ -50,6 +58,17 @@ def test_parallel_actions_observe_one_snapshot_and_combine_adds() -> None:
         agent.resources["balance"] == starting[agent_id] + 0.6
         for agent_id, agent in engine.world.agents.items()
     )
+
+
+def test_observations_projects_current_state_without_resetting_runtime() -> None:
+    engine = _engine("delayed_reward_learning", 11, steps=10)
+    engine.step_internal()
+
+    observations = engine.observations()
+
+    assert engine.world.step == 1
+    assert set(observations) == set(engine.world.agents)
+    assert {observation.step for observation in observations.values()} == {1}
 
 
 def test_training_memory_is_bounded_by_state_space_not_turns() -> None:
