@@ -10,10 +10,14 @@ A domain pack is a directory containing `pack.toml`, an IncentiveSpec v0.4 TOML 
 - an optional `module:factory` hook reference.
 
 Parameter targets identify an entity type, entity ID where required, and field-path
-segments. The same declarations drive CLI overrides and the allowed Optuna search
-bounds. A study may narrow numeric bounds but cannot exceed the
-pack manifest. Trusted constraints are not parameter targets and cannot enter a search
-space.
+segments. The same declarations drive exact workbench inputs, CLI overrides, and the
+allowed Optuna search bounds. A study may narrow numeric bounds but cannot exceed the
+pack manifest. Numeric overrides and narrowed search bounds must align to the declared
+step, measured from the parameter minimum. Trusted constraints are not parameter targets
+and cannot enter a search space.
+
+Each archetype may appear only once in an IncentiveSpec `population` list. Set its total
+agent count on that single entry rather than splitting an archetype across entries.
 
 ## Reference Packs
 
@@ -28,7 +32,7 @@ icframe run public_goods --param learners=4 --retention experiment
 icframe study delayed_reward_learning --mode pareto --trials 40
 ```
 
-Use `icframe packs` to list installed packs.
+Use `icframe packs` to list installed packs and the interactive UI for guided controls.
 
 Typed Python builders and graph composition are deliberately deferred. Pack TOML is the
 only domain-authoring contract in v0.4.

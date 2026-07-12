@@ -8,10 +8,12 @@ ICFRAME compiles declarative incentive systems into deterministic, bounded-memor
 uv sync --group dev
 uv run icframe packs
 uv run icframe run public_goods --seed 7
+uv run icframe ui
 ```
 
-Use `icframe study` for bounded Optuna studies and `icframe report` for self-contained
-HTML exports. Run and study artifacts live under `.artifacts/icframe`;
+Open `http://127.0.0.1:8765`. The workbench supports exact experiment parameters,
+seed batches, bounded Optuna studies, comparisons, cancellation, charts, and
+self-contained report export. Run and study artifacts live under `.artifacts/icframe`;
 `catalog.sqlite3` is only a rebuildable index.
 
 ## Optional Integrations
@@ -26,7 +28,8 @@ uv sync --extra analytics  # NetworkX artifact analysis
 
 The base install contains only Pydantic. Mesa and the marimo viewer are removed.
 
-For a live LLM domain, configure an OpenAI-compatible endpoint in `.env`:
+For a live LLM domain, configure an OpenAI-compatible endpoint in `.env` or enter
+session-only credentials in the workbench:
 
 ```bash
 ICFRAME_LLM_BASE_URL=https://api.openai.com/v1

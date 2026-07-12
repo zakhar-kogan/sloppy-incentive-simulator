@@ -14,6 +14,7 @@ from icframe.replay import replay_run
 from icframe.reports import write_html_report
 from icframe.runtime_settings import load_runtime_llm_settings
 from icframe.study import run_study
+from icframe.ui.server import serve_ui
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -56,6 +57,10 @@ def build_parser() -> argparse.ArgumentParser:
     catalog.add_argument("operation", choices=["rebuild"])
     _artifact_argument(catalog)
 
+    ui = commands.add_parser("ui", help="launch the canonical local simulator UI")
+    ui.add_argument("--host", default="127.0.0.1")
+    ui.add_argument("--port", type=int, default=8765)
+    _artifact_argument(ui)
     return parser
 
 
@@ -192,7 +197,8 @@ def main() -> int:
     if args.command == "catalog":
         print(json.dumps(Catalog(args.artifact_root).rebuild(), sort_keys=True))
         return 0
-    raise AssertionError(f"unhandled command: {args.command}")
+    serve_ui(host=args.host, port=args.port, artifact_root=args.artifact_root)
+    return 0
 
 
 if __name__ == "__main__":

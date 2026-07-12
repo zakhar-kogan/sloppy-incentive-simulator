@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import inspect
+import math
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -154,16 +155,27 @@ def _validate_parameter_value(parameter: GuidedParameter, value: Scalar) -> None
         numeric = float(value)
         if numeric < float(parameter.minimum) or numeric > float(parameter.maximum):
             raise ValueError(f"parameter {parameter.id} is outside its bounds")
+        if parameter.step is not None and not _is_step_aligned(
+            numeric, float(parameter.minimum), float(parameter.step)
+        ):
+            raise ValueError(f"parameter {parameter.id} does not align with its step")
     elif parameter.type is ParameterType.INTEGER:
         if isinstance(value, bool) or not isinstance(value, int):
             raise ValueError(f"parameter {parameter.id} requires an integer")
         if value < int(parameter.minimum) or value > int(parameter.maximum):
             raise ValueError(f"parameter {parameter.id} is outside its bounds")
+        if parameter.step is not None and (value - int(parameter.minimum)) % int(parameter.step):
+            raise ValueError(f"parameter {parameter.id} does not align with its step")
     elif parameter.type is ParameterType.BOOLEAN:
         if not isinstance(value, bool):
             raise ValueError(f"parameter {parameter.id} requires a boolean")
     elif parameter.type is ParameterType.CHOICE and value not in parameter.choices:
         raise ValueError(f"parameter {parameter.id} must be one of {parameter.choices}")
+
+
+def _is_step_aligned(value: float, minimum: float, step: float) -> bool:
+    offset = (value - minimum) / step
+    return math.isclose(offset, round(offset), rel_tol=1e-9, abs_tol=1e-9)
 
 
 def _load_hooks(reference: str | None) -> DomainHooks:

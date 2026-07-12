@@ -439,9 +439,13 @@ class IncentiveSpec(SpecModel):
             if unknown:
                 raise ValueError(f"archetype {name} references unknown channels: {sorted(unknown)}")
 
+        population_archetypes: set[str] = set()
         for entry in self.population:
             if entry.archetype not in self.archetypes:
                 raise ValueError(f"population references unknown archetype {entry.archetype!r}")
+            if entry.archetype in population_archetypes:
+                raise ValueError(f"duplicate population archetype {entry.archetype!r}")
+            population_archetypes.add(entry.archetype)
 
         for transition in self.transitions:
             if transition.id in transition_ids:
@@ -531,6 +535,12 @@ class GuidedParameter(SpecModel):
                 raise ValueError("parameter minimum exceeds maximum")
             if self.step is not None and self.step <= 0:
                 raise ValueError("numeric parameter step must be positive")
+            if (
+                self.type is ParameterType.INTEGER
+                and self.step is not None
+                and (isinstance(self.step, float) and not self.step.is_integer())
+            ):
+                raise ValueError("integer parameter step must be an integer")
         elif self.minimum is not None or self.maximum is not None or self.step is not None:
             raise ValueError("only numeric parameters may define bounds or step")
         if self.type is ParameterType.CHOICE and not self.choices:

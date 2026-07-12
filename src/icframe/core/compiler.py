@@ -34,6 +34,7 @@ class CompilationError(ValueError):
 @dataclass(frozen=True, slots=True)
 class RuntimePlan:
     pack_id: str
+    pack_path: str
     spec: IncentiveSpec
     hook_hash: str
     runtime_hash: str
@@ -113,6 +114,7 @@ def compile_runtime(pack: LoadedDomainPack) -> RuntimePlan:
     }
     return RuntimePlan(
         pack_id=pack.id,
+        pack_path=str(pack.path),
         spec=spec,
         hook_hash=pack.hook_hash,
         runtime_hash=runtime_hash(spec, pack.hook_hash),

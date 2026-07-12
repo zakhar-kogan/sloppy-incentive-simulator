@@ -58,6 +58,7 @@ dev = [
 packages = ["src/icframe"]
 artifacts = [
     "src/icframe/domain_packs/**/*.toml",
+    "src/icframe/ui/static/*",
 ]
 
 [tool.ruff]

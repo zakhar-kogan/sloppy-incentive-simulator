@@ -1,6 +1,6 @@
 # ICFRAME v0.4 Architecture
 
-ICFRAME is a compiled incentive-simulation core with self-contained report export. Files are authoritative; SQLite is a rebuildable query index.
+ICFRAME is a compiled incentive-simulation core with a local interactive product surface. Files are authoritative; SQLite is a rebuildable query index.
 
 ```mermaid
 flowchart LR
@@ -17,6 +17,7 @@ flowchart LR
   F --> D["Rebuildable SQLite catalog"]
   U --> V["Internal report projection"]
   D --> V
+  V --> UI["Interactive UI"]
   V --> HTML["Self-contained HTML"]
 ```
 

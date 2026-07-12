@@ -47,6 +47,14 @@ def test_unknown_metric_selectors_are_not_silent_noops() -> None:
         IncentiveSpec.model_validate(payload)
 
 
+def test_duplicate_population_archetypes_are_rejected() -> None:
+    payload = load_domain_pack("public_goods").spec.model_dump(mode="python", by_alias=True)
+    payload["population"].append(dict(payload["population"][0]))
+
+    with pytest.raises(ValidationError, match="duplicate population archetype"):
+        IncentiveSpec.model_validate(payload)
+
+
 def test_all_reference_packs_have_guidance_and_compile() -> None:
     for pack_id in (
         "public_goods",

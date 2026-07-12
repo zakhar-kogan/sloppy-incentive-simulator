@@ -11,6 +11,7 @@ from icframe.core.observer import NoopObserver
 from icframe.core.packs import LoadedDomainPack, load_domain_pack
 from icframe.core.types import StepResult
 from icframe.domain.incentive_spec import PolicyKind, RetentionProfile, ScheduleMode
+from icframe.domain.run import RunStatus
 
 try:  # Kept entirely outside the base install.
     import numpy as np
@@ -77,6 +78,8 @@ class _ExternalRuntime:
         }
 
     def _reset_engine(self, seed: int | None) -> None:
+        self._finalize_active()
+        self.last_summary = None
         run_seed = seed if seed is not None else self.plan.spec.experiment.seeds[0]
         run_id = self.requested_run_id or f"run_{uuid.uuid4().hex[:12]}"
         observer = (
@@ -94,6 +97,12 @@ class _ExternalRuntime:
         for agent_id, agent in self.engine.world.agents.items():
             agent.policy_kind = PolicyKind.EXTERNAL
             self.engine.policies[agent_id] = None
+
+    def _finalize_active(self) -> None:
+        if self.engine is None or self.last_summary is not None:
+            return
+        self.last_summary = self.engine.finish_session(status=RunStatus.CANCELLED)
+        self.engine = None
 
     def observation_space(self, agent: str):
         return self.observation_spaces[agent]
@@ -196,7 +205,7 @@ class PettingZooParallelIncentiveEnv(_ExternalRuntime, ParallelEnv):
         return None
 
     def close(self) -> None:
-        return None
+        self._finalize_active()
 
 
 class PettingZooAECIncentiveEnv(_ExternalRuntime, AECEnv):
@@ -296,7 +305,7 @@ class PettingZooAECIncentiveEnv(_ExternalRuntime, AECEnv):
         return None
 
     def close(self) -> None:
-        return None
+        self._finalize_active()
 
 
 def _agent_ids(plan: RuntimePlan) -> list[str]:

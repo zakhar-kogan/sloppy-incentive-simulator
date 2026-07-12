@@ -12,12 +12,9 @@ from icframe.domain.base import Scalar
 from icframe.domain.incentive_spec import (
     Availability,
     ConstraintOperator,
-    EffectScope,
     GraphVisibility,
     NormStatus,
     Operation,
-    OutcomeVector,
-    OutcomeVisibility,
     RetentionProfile,
     ScheduleMode,
 )
@@ -32,16 +29,15 @@ from icframe.domain.run import (
 from icframe.llm import LLMClient
 
 from .compiler import RuntimePlan, compile_runtime, trusted_evaluation_hash
+from .execution import TransitionExecutor
 from .hooks import CommitContext, HookResult, InitContext, ResolvedStatePatch, StepContext
 from .metrics import OnlineMetrics
 from .observer import NoopObserver, RunObserver
 from .packs import LoadedDomainPack, apply_parameters
 from .policies import Policy
+from .projection import ObservationProjector
 from .types import (
-    ActionCandidate,
     AgentState,
-    CompiledEffect,
-    CompiledStateUpdate,
     CompiledTransition,
     Observation,
     PolicyChoice,
@@ -95,6 +91,8 @@ class RuntimeEngine:
         self._session_started = False
         self._session_finished = False
         self._session_started_at = 0.0
+        self._observation_projector = ObservationProjector(plan)
+        self._transition_executor = TransitionExecutor()
         self.world = self._initial_world()
         self._initialize_policies()
         self._apply_hook_result(
@@ -107,7 +105,7 @@ class RuntimeEngine:
             )
         )
 
-    def reset(self) -> dict[str, Observation]:
+    def observations(self) -> dict[str, Observation]:
         return {agent_id: self.observe(agent_id) for agent_id in self.world.agents}
 
     def observe(
@@ -117,47 +115,11 @@ class RuntimeEngine:
         snapshot: WorldSnapshot | None = None,
     ) -> Observation:
         snapshot = snapshot or self.world.snapshot()
-        agent = snapshot.agents[agent_id]
-        profile = self.plan.visibility[self.world.agents[agent_id].visibility_profile]
-        candidates = self._candidates(agent_id, snapshot)
-        visible_candidates = tuple(
-            ActionCandidate(
-                transition_id=transition.id,
-                action=transition.action,
-                target_id=target_id,
-                norm_status=transition.norm_status,
-                tags=transition.tags,
-                visible_outcomes=self._visible_outcome(
-                    agent_id,
-                    transition,
-                    target_id,
-                    snapshot,
-                    profile.outcomes,
-                ),
-                visible_sanctions=self._visible_sanctions(
-                    agent_id,
-                    transition,
-                    target_id,
-                    snapshot,
-                    profile.sanctions,
-                ),
-                prompt_label=(transition.prompt_label if profile.prompts else None),
-                prompt_description=(transition.prompt_description if profile.prompts else None),
-            )
-            for transition, target_id in candidates
-        )
-        state = self.world.agents[agent_id]
-        history_count = profile.history_events
-        history = tuple(state.history)[-history_count:] if history_count else ()
-        return Observation(
-            observation_id=f"obs_{self.run_id}_{snapshot.step:08d}_{agent_id}",
+        return self._observation_projector.project(
             run_id=self.run_id,
-            step=snapshot.step,
             agent_id=agent_id,
-            state=agent.state,
-            resources=dict(agent.resources),
-            candidates=visible_candidates,
-            visible_history=history,
+            snapshot=snapshot,
+            agent_state=self.world.agents[agent_id],
         )
 
     def action_mask(self, agent_id: str) -> list[int]:
@@ -187,12 +149,12 @@ class RuntimeEngine:
     def start_session(self) -> None:
         if self._session_started:
             return
-        self._session_started = True
-        self._session_started_at = time.perf_counter()
+        started_at = time.perf_counter()
         self.observer.start(
             {
                 "run_id": self.run_id,
                 "pack_id": self.plan.pack_id,
+                "pack_path": self.plan.pack_path,
                 "spec": self.plan.spec.model_dump(mode="json", by_alias=True),
                 "seed": self.seed,
                 "hook_hash": self.plan.hook_hash,
@@ -203,6 +165,11 @@ class RuntimeEngine:
                 "sample_every_steps": self.sample_every_steps,
             }
         )
+        # Starting the observer is the transactional boundary. In particular, a
+        # pre-existing artifact directory must fail before this engine becomes
+        # finishable and can overwrite that directory.
+        self._session_started_at = started_at
+        self._session_started = True
 
     def finish_session(
         self,
@@ -432,12 +399,15 @@ class RuntimeEngine:
         patches: list[ResolvedStatePatch] = []
         next_states: dict[str, str] = {}
         for index, (agent_id, transition, target_id) in enumerate(selected, start=1):
-            event, event_patches = self._execute(
-                snapshot,
-                agent_id,
-                transition,
-                target_id,
-                index,
+            event, event_patches = self._transition_executor.execute(
+                run_id=self.run_id,
+                step=self.world.step,
+                turn_index=index,
+                snapshot=snapshot,
+                agent_id=agent_id,
+                transition=transition,
+                target_id=target_id,
+                rng=self.rng,
             )
             event.scalar_rewards = {}
             events.append(event)
@@ -469,12 +439,15 @@ class RuntimeEngine:
             self.observer.observation(observation)
             if transition is None:
                 continue
-            event, patches = self._execute(
-                snapshot,
-                agent_id,
-                transition,
-                target_id,
-                index,
+            event, patches = self._transition_executor.execute(
+                run_id=self.run_id,
+                step=self.world.step,
+                turn_index=index,
+                snapshot=snapshot,
+                agent_id=agent_id,
+                transition=transition,
+                target_id=target_id,
+                rng=self.rng,
             )
             for patch in patches:
                 self._apply_patch(patch)
@@ -532,230 +505,6 @@ class RuntimeEngine:
             return decision, None, choice.target_id
         transition = self.plan.transitions_by_state_action[(observation.state, choice.action)]
         return decision, transition, choice.target_id
-
-    def _execute(
-        self,
-        snapshot: WorldSnapshot,
-        agent_id: str,
-        transition: CompiledTransition,
-        target_id: str | None,
-        turn_index: int,
-    ) -> tuple[RuntimeEvent, list[ResolvedStatePatch]]:
-        outcomes_by_agent: dict[str, OutcomeVector] = {}
-        global_outcome: OutcomeVector = {}
-        for effect in transition.effects:
-            self._apply_effect(
-                effect,
-                snapshot,
-                agent_id,
-                target_id,
-                outcomes_by_agent,
-                global_outcome,
-            )
-        audit_sampled = False
-        detected = False
-        enforced = False
-        violating = transition.norm_status is NormStatus.FORBIDDEN
-        if transition.enforcement is not None:
-            enforcement = transition.enforcement
-            audit_sampled = self.rng.random() < enforcement.audit_probability
-            if audit_sampled:
-                if violating:
-                    detected = self.rng.random() < enforcement.detection_probability
-                    if detected and enforcement.false_negative_probability:
-                        detected = self.rng.random() >= enforcement.false_negative_probability
-                elif enforcement.false_positive_probability:
-                    detected = self.rng.random() < enforcement.false_positive_probability
-            if detected:
-                enforced = self.rng.random() < enforcement.enforcement_probability
-            selected_effects = (
-                enforcement.sanctions
-                if enforced
-                else enforcement.compliance_rewards
-                if not violating
-                else ()
-            )
-            for effect in selected_effects:
-                self._apply_effect(
-                    effect,
-                    snapshot,
-                    agent_id,
-                    target_id,
-                    outcomes_by_agent,
-                    global_outcome,
-                )
-        patches = self._resolve_updates(
-            transition.state_updates,
-            snapshot,
-            actor_id=agent_id,
-            target_id=target_id,
-        )
-        event = RuntimeEvent(
-            event_id=(f"event_{self.run_id}_{self.world.step:08d}_{turn_index:04d}_{agent_id}"),
-            step=self.world.step,
-            actor_id=agent_id,
-            target_id=target_id,
-            transition_id=transition.id,
-            action=transition.action,
-            from_state=snapshot.agents[agent_id].state,
-            to_state=transition.to_state,
-            availability=transition.availability,
-            norm_status=transition.norm_status,
-            tags=transition.tags,
-            outcomes_by_agent=outcomes_by_agent,
-            global_outcome=global_outcome,
-            audit_sampled=audit_sampled,
-            detected=detected,
-            enforced=enforced,
-            explanation_reasons=transition.explanation_reasons,
-            violations=("forbidden_action",) if violating else (),
-            remediation_actions=(
-                transition.enforcement.remediation_actions
-                if transition.enforcement is not None
-                else ()
-            ),
-        )
-        return event, patches
-
-    def _candidates(
-        self,
-        agent_id: str,
-        snapshot: WorldSnapshot,
-    ) -> list[tuple[CompiledTransition, str | None]]:
-        state = snapshot.agents[agent_id].state
-        result = []
-        for transition in self.plan.transitions_by_state.get(state, ()):
-            if transition.availability is Availability.HARD_BLOCKED:
-                continue
-            if not transition.requires_target:
-                result.append((transition, None))
-                continue
-            for target_id, target in sorted(snapshot.agents.items()):
-                if target_id == agent_id:
-                    continue
-                if transition.target_populations and (
-                    target.population not in transition.target_populations
-                ):
-                    continue
-                result.append((transition, target_id))
-        return result
-
-    def _visible_outcome(
-        self,
-        agent_id: str,
-        transition: CompiledTransition,
-        target_id: str | None,
-        snapshot: WorldSnapshot,
-        visibility: OutcomeVisibility,
-    ) -> OutcomeVector:
-        if visibility in {OutcomeVisibility.HIDDEN, OutcomeVisibility.LABEL_ONLY}:
-            return {}
-        outcomes: dict[str, OutcomeVector] = {}
-        global_outcome: OutcomeVector = {}
-        for effect in transition.effects:
-            self._apply_effect(
-                effect,
-                snapshot,
-                agent_id,
-                target_id,
-                outcomes,
-                global_outcome,
-            )
-        own = dict(outcomes.get(agent_id, {}))
-        if visibility is OutcomeVisibility.FULL_NUMERIC:
-            for channel, value in global_outcome.items():
-                own[channel] = own.get(channel, 0.0) + value
-            return own
-        scalarizer = self.world.agents[agent_id].scalarizer
-        scalar = sum(scalarizer.get(channel, 0.0) * value for channel, value in own.items())
-        return {"__scalar__": scalar}
-
-    def _visible_sanctions(
-        self,
-        agent_id: str,
-        transition: CompiledTransition,
-        target_id: str | None,
-        snapshot: WorldSnapshot,
-        visibility: OutcomeVisibility,
-    ) -> OutcomeVector:
-        if transition.enforcement is None or visibility in {
-            OutcomeVisibility.HIDDEN,
-            OutcomeVisibility.LABEL_ONLY,
-        }:
-            return {}
-        outcomes: dict[str, OutcomeVector] = {}
-        global_outcome: OutcomeVector = {}
-        for effect in transition.enforcement.sanctions:
-            self._apply_effect(
-                effect,
-                snapshot,
-                agent_id,
-                target_id,
-                outcomes,
-                global_outcome,
-            )
-        own = dict(outcomes.get(agent_id, {}))
-        if visibility is OutcomeVisibility.FULL_NUMERIC:
-            for channel, value in global_outcome.items():
-                own[channel] = own.get(channel, 0.0) + value
-            return own
-        scalarizer = self.world.agents[agent_id].scalarizer
-        return {
-            "__scalar__": sum(
-                scalarizer.get(channel, 0.0) * value for channel, value in own.items()
-            )
-        }
-
-    def _apply_effect(
-        self,
-        effect: CompiledEffect,
-        snapshot: WorldSnapshot,
-        actor_id: str,
-        target_id: str | None,
-        outcomes_by_agent: dict[str, OutcomeVector],
-        global_outcome: OutcomeVector,
-    ) -> None:
-        if effect.scope is EffectScope.GLOBAL:
-            _apply_vector(global_outcome, effect.values, effect.operation)
-            return
-        recipients = _recipients(effect.scope, effect.population, snapshot, actor_id, target_id)
-        for recipient in recipients:
-            _apply_vector(
-                outcomes_by_agent.setdefault(recipient, {}),
-                effect.values,
-                effect.operation,
-            )
-
-    def _resolve_updates(
-        self,
-        updates: tuple[CompiledStateUpdate, ...],
-        snapshot: WorldSnapshot,
-        *,
-        actor_id: str,
-        target_id: str | None,
-    ) -> list[ResolvedStatePatch]:
-        patches = []
-        for update in updates:
-            if update.scope is EffectScope.GLOBAL:
-                recipients = ["__global__"]
-            else:
-                recipients = _recipients(
-                    update.scope,
-                    update.population,
-                    snapshot,
-                    actor_id,
-                    target_id,
-                )
-            patches.extend(
-                ResolvedStatePatch(
-                    target=recipient,
-                    field=update.field,
-                    operation=update.operation,
-                    value=update.value,
-                )
-                for recipient in recipients
-            )
-        return patches
 
     def _apply_hook_result(self, result: HookResult) -> None:
         self._validate_hook_result(result)
@@ -952,44 +701,6 @@ def load_pack_if_needed(pack: LoadedDomainPack | str | Path) -> LoadedDomainPack
     from .packs import load_domain_pack
 
     return load_domain_pack(pack)
-
-
-def _recipients(
-    scope: EffectScope,
-    population: str | None,
-    snapshot: WorldSnapshot,
-    actor_id: str,
-    target_id: str | None,
-) -> list[str]:
-    if scope is EffectScope.ACTOR:
-        return [actor_id]
-    if scope is EffectScope.TARGET:
-        if target_id is None:
-            raise ValueError("target-scoped behavior requires target_id")
-        return [target_id]
-    if scope is EffectScope.ALL_AGENTS:
-        return sorted(snapshot.agents)
-    if scope is EffectScope.POPULATION:
-        return sorted(
-            agent_id
-            for agent_id, agent in snapshot.agents.items()
-            if agent.population == population
-        )
-    raise ValueError(f"scope {scope.value} does not address agents")
-
-
-def _apply_vector(
-    target: OutcomeVector,
-    values: tuple[tuple[str, float], ...],
-    operation: Operation,
-) -> None:
-    for channel, value in values:
-        if operation is Operation.ADD:
-            target[channel] = target.get(channel, 0.0) + value
-        elif operation is Operation.MULTIPLY:
-            target[channel] = target.get(channel, 0.0) * value
-        else:
-            target[channel] = value
 
 
 def _apply_path(
