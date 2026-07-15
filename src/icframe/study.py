@@ -39,7 +39,13 @@ from icframe.domain.run import (
     StudySummary,
     TrialRecord,
 )
-from icframe.llm import LiteLLMClient, LLMClient, LLMRequest, LLMResponse
+from icframe.llm import (
+    LiteLLMClient,
+    LLMClient,
+    LLMRequest,
+    LLMResponse,
+    UnknownLLMPricingError,
+)
 
 
 def run_study(
@@ -143,7 +149,7 @@ def _run_study(
         llm_calls_used, llm_cost_used = _budget_usage(
             budgeted_client,
             llm_calls_used + baseline.llm_calls,
-            llm_cost_used + baseline.estimated_llm_cost_usd,
+            _add_cost(llm_cost_used, baseline.estimated_llm_cost_usd),
         )
 
     directions = [
@@ -198,7 +204,7 @@ def _run_study(
             llm_calls_used, llm_cost_used = _budget_usage(
                 budgeted_client,
                 llm_calls_used + record.llm_calls,
-                llm_cost_used + record.estimated_llm_cost_usd,
+                _add_cost(llm_cost_used, record.estimated_llm_cost_usd),
             )
     else:
         _run_process_trials(
@@ -234,7 +240,7 @@ def _run_study(
             llm_calls_used, llm_cost_used = _budget_usage(
                 budgeted_client,
                 llm_calls_used + retained.llm_calls,
-                llm_cost_used + retained.estimated_llm_cost_usd,
+                _add_cost(llm_cost_used, retained.estimated_llm_cost_usd),
             )
 
     preview_numbers = {record.number for record in records[:200]}
@@ -430,7 +436,7 @@ def _evaluate_trial(
         objective_values=objective_values,
         feasible=_constraints_pass(pack, seed_results),
         llm_calls=sum(seed.llm_calls for seed in seed_results),
-        estimated_llm_cost_usd=sum(seed.estimated_llm_cost_usd for seed in seed_results),
+        estimated_llm_cost_usd=_sum_costs([seed.estimated_llm_cost_usd for seed in seed_results]),
         runtime_hash=plan.runtime_hash,
         hook_hash=plan.hook_hash,
     )
@@ -630,10 +636,12 @@ def _validate_study_config(pack: LoadedDomainPack, config: StudyConfig) -> None:
         raise ValueError("live LLM budget was enabled for a pack without LLM policies")
 
 
-def _budget_exhausted(config: StudyConfig, calls: int, cost: float) -> bool:
+def _budget_exhausted(config: StudyConfig, calls: int, cost: float | None) -> bool:
     budget = config.live_llm
     if not budget.enabled:
         return False
+    if cost is None:
+        raise ValueError("LLM study cost is unavailable; configure explicit model pricing")
     return calls >= int(budget.max_calls) or cost >= float(budget.max_cost_usd)
 
 
@@ -650,6 +658,10 @@ class _BudgetedLLMClient:
             raise RuntimeError("LLM study budget exhausted")
         response = self.client.complete(request)
         self.calls += 1
+        if response.estimated_cost is None:
+            raise UnknownLLMPricingError(
+                "LLM study cost is unavailable; configure explicit model pricing"
+            )
         self.cost += response.estimated_cost
         if self.cost > self.max_cost_usd:
             raise RuntimeError("LLM study cost budget exhausted")
@@ -659,11 +671,24 @@ class _BudgetedLLMClient:
 def _budget_usage(
     client: _BudgetedLLMClient | None,
     fallback_calls: int,
-    fallback_cost: float,
-) -> tuple[int, float]:
+    fallback_cost: float | None,
+) -> tuple[int, float | None]:
     if client is None:
         return fallback_calls, fallback_cost
     return client.calls, client.cost
+
+
+def _add_cost(left: float | None, right: float | None) -> float | None:
+    if left is None or right is None:
+        return None
+    return left + right
+
+
+def _sum_costs(values: list[float | None]) -> float | None:
+    total: float | None = 0.0
+    for value in values:
+        total = _add_cost(total, value)
+    return total
 
 
 def _append_trial(study_dir: Path, record: TrialRecord) -> None:

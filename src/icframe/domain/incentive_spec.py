@@ -144,6 +144,23 @@ class ParameterEntity(StrEnum):
     HOOK_CONFIG = "hook_config"
 
 
+class MetricFormat(StrEnum):
+    NUMBER = "number"
+    INTEGER = "integer"
+    PERCENT = "percent"
+    CURRENCY = "currency"
+    DURATION = "duration"
+
+
+class MetricCategory(StrEnum):
+    OUTCOME = "outcome"
+    RATE = "rate"
+    COST = "cost"
+    RISK = "risk"
+    PROXY = "proxy"
+    ENFORCEMENT = "enforcement"
+
+
 class SpecHeader(SpecModel):
     version: Literal["0.4"]
     name: str = Field(min_length=1)
@@ -215,6 +232,18 @@ class LLMConfig(SpecModel):
     action_field: str = "action"
     target_field: str = "target_id"
     require_json: bool = True
+    input_cost_per_million_tokens_usd: float | None = Field(default=None, ge=0.0)
+    output_cost_per_million_tokens_usd: float | None = Field(default=None, ge=0.0)
+
+    @model_validator(mode="after")
+    def explicit_prices_are_paired(self) -> LLMConfig:
+        prices = (
+            self.input_cost_per_million_tokens_usd,
+            self.output_cost_per_million_tokens_usd,
+        )
+        if (prices[0] is None) != (prices[1] is None):
+            raise ValueError("explicit LLM input and output prices must be provided together")
+        return self
 
 
 class Archetype(SpecModel):
@@ -568,11 +597,34 @@ class ValidationDefaults(SpecModel):
     report_metrics: list[str] = Field(min_length=1)
 
 
+class ReportMetric(SpecModel):
+    label: str
+    description: str = ""
+    unit: str | None = None
+    format: MetricFormat = MetricFormat.NUMBER
+    desired_direction: ObjectiveDirection | None = None
+    category: MetricCategory = MetricCategory.OUTCOME
+    headline_order: int | None = Field(default=None, ge=0)
+    chart_group: str | None = None
+
+
+class ReportChartGroup(SpecModel):
+    id: str
+    label: str
+    metrics: list[str] = Field(min_length=1)
+
+
+class ReportConfig(SpecModel):
+    metrics: dict[str, ReportMetric] = Field(default_factory=dict)
+    chart_groups: list[ReportChartGroup] = Field(default_factory=list)
+
+
 class DomainPackManifest(SpecModel):
     pack: DomainPackHeader
     study: StudyDefaults
     validation: ValidationDefaults
     parameters: list[GuidedParameter] = Field(default_factory=list)
+    report: ReportConfig = Field(default_factory=ReportConfig)
 
     @field_validator("parameters")
     @classmethod
@@ -581,6 +633,30 @@ class DomainPackManifest(SpecModel):
         if len(ids) != len(set(ids)):
             raise ValueError("domain pack parameter ids must be unique")
         return value
+
+    @model_validator(mode="after")
+    def report_references_are_valid(self) -> DomainPackManifest:
+        report_metrics = set(self.report.metrics)
+        unknown = report_metrics - set(self.validation.report_metrics)
+        if unknown:
+            raise ValueError(f"report metadata references undeclared metrics: {sorted(unknown)}")
+        group_ids = [group.id for group in self.report.chart_groups]
+        if len(group_ids) != len(set(group_ids)):
+            raise ValueError("report chart group ids must be unique")
+        for group in self.report.chart_groups:
+            missing = set(group.metrics) - report_metrics
+            if missing:
+                raise ValueError(
+                    f"report chart group {group.id} references metrics without metadata: "
+                    f"{sorted(missing)}"
+                )
+        declared_groups = set(group_ids)
+        for name, metric in self.report.metrics.items():
+            if metric.chart_group is not None and metric.chart_group not in declared_groups:
+                raise ValueError(
+                    f"report metric {name} references unknown chart group {metric.chart_group!r}"
+                )
+        return self
 
 
 def load_incentive_spec(path: str | Path) -> IncentiveSpec:

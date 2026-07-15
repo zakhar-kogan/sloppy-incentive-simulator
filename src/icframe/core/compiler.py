@@ -5,6 +5,7 @@ import json
 from dataclasses import dataclass
 
 from icframe.domain.incentive_spec import (
+    DomainPackManifest,
     EffectScope,
     IncentiveSpec,
     MetricSpec,
@@ -35,6 +36,7 @@ class CompilationError(ValueError):
 class RuntimePlan:
     pack_id: str
     pack_path: str
+    pack_manifest: DomainPackManifest
     spec: IncentiveSpec
     hook_hash: str
     runtime_hash: str
@@ -115,6 +117,7 @@ def compile_runtime(pack: LoadedDomainPack) -> RuntimePlan:
     return RuntimePlan(
         pack_id=pack.id,
         pack_path=str(pack.path),
+        pack_manifest=pack.manifest,
         spec=spec,
         hook_hash=pack.hook_hash,
         runtime_hash=runtime_hash(spec, pack.hook_hash),

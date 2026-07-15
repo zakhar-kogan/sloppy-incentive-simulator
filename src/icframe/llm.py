@@ -22,6 +22,8 @@ class LLMRequest(ICFrameModel):
     response_schema: dict[str, object] = Field(default_factory=dict)
     temperature: float = 0.0
     require_json: bool = True
+    input_cost_per_million_tokens_usd: float | None = None
+    output_cost_per_million_tokens_usd: float | None = None
 
     @property
     def request_hash(self) -> str:
@@ -38,7 +40,7 @@ class LLMResponse(ICFrameModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
-    estimated_cost: float = 0.0
+    estimated_cost: float | None = None
     retry_count: int = 0
     fallback_used: bool = False
     error_type: str | None = None
@@ -56,16 +58,25 @@ class LLMCallRecord(ICFrameModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
-    estimated_cost: float = 0.0
+    estimated_cost: float | None = None
     retry_count: int = 0
     fallback_used: bool = False
     error_type: str | None = None
+    step: int | None = None
+    agent_id: str | None = None
+    selected_action: str | None = None
+    status: str = "completed"
+    failure_classification: str | None = None
     redaction_mode: str = "balanced"
 
 
 class LLMClient(Protocol):
     def complete(self, request: LLMRequest) -> LLMResponse:
         """Return a model completion for a policy decision request."""
+
+
+class UnknownLLMPricingError(ValueError):
+    """Raised when a cost-bounded call cannot be priced."""
 
 
 class _RecordedLLMClient:
@@ -129,7 +140,11 @@ class _RecordedLLMClient:
             prompt_tokens=int(record.get("prompt_tokens", 0) or 0),
             completion_tokens=int(record.get("completion_tokens", 0) or 0),
             total_tokens=int(record.get("total_tokens", 0) or 0),
-            estimated_cost=float(record.get("estimated_cost", 0.0) or 0.0),
+            estimated_cost=(
+                float(record["estimated_cost"])
+                if record.get("estimated_cost") is not None
+                else None
+            ),
             error_type=str(record["error"]) if record.get("error") else None,
         )
 
@@ -182,7 +197,16 @@ class LiteLLMClient:
         try:
             estimated_cost = float(litellm.completion_cost(completion_response=response) or 0.0)
         except Exception:  # Provider-specific responses may not carry pricing metadata.
-            estimated_cost = 0.0
+            if (
+                request.input_cost_per_million_tokens_usd is not None
+                and request.output_cost_per_million_tokens_usd is not None
+            ):
+                estimated_cost = (
+                    prompt_tokens * request.input_cost_per_million_tokens_usd
+                    + completion_tokens * request.output_cost_per_million_tokens_usd
+                ) / 1_000_000
+            else:
+                estimated_cost = None
         return LLMResponse(
             content=content,
             parsed=parsed,

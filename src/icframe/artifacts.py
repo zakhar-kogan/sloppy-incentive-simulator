@@ -128,7 +128,10 @@ class ArtifactObserver:
                 "runtime_version": __version__,
                 "replayable": True,
             },
-            files={"spec.json": context["spec"]},
+            files={
+                "spec.json": context["spec"],
+                "domain_pack_manifest.json": context["pack_manifest"],
+            },
         )
 
     def observation(self, value: Observation) -> None:
@@ -210,6 +213,7 @@ class ArtifactObserver:
         artifacts = {
             "manifest": str(self.run_dir / "manifest.json"),
             "spec": str(self.run_dir / "spec.json"),
+            "domain_pack_manifest": str(self.run_dir / "domain_pack_manifest.json"),
             "summary": str(self.run_dir / "summary.json"),
         }
         for path in sorted(self.run_dir.glob("*.jsonl")):
@@ -261,8 +265,16 @@ class ArtifactObserver:
             "prompt_tokens": payload.get("prompt_tokens", 0),
             "completion_tokens": payload.get("completion_tokens", 0),
             "total_tokens": payload.get("total_tokens", 0),
-            "estimated_cost": payload.get("estimated_cost", 0.0),
+            "estimated_cost": payload.get("estimated_cost"),
             "error": payload.get("error"),
+            "status": payload.get("status"),
+            "failure_classification": payload.get("failure_classification"),
+            "step": payload.get("step"),
+            "agent_id": payload.get("agent_id"),
+            "selected_action": payload.get("selected_action"),
+            "latency_ms": payload.get("latency_ms", 0.0),
+            "retry_count": payload.get("retry_count", 0),
+            "fallback_used": payload.get("fallback_used", False),
         }
         prompt = str(payload.get("prompt", ""))
         content = str(payload.get("content", ""))

@@ -19,8 +19,21 @@ from pydantic import ValidationError
 from icframe.artifacts import ArtifactObserver, update_manifest
 from icframe.catalog import Catalog
 from icframe.core import list_domain_packs, load_domain_pack, run_experiment
-from icframe.domain.incentive_spec import IncentiveSpec, PolicyKind, RetentionProfile
-from icframe.domain.run import LiveLLMBudget, RunConfig, RunStatus, StudyConfig, StudyMode
+from icframe.domain.incentive_spec import (
+    DomainPackManifest,
+    IncentiveSpec,
+    PolicyKind,
+    RetentionProfile,
+)
+from icframe.domain.run import (
+    Checkpoint,
+    LiveLLMBudget,
+    RunConfig,
+    RunStatus,
+    RunSummary,
+    StudyConfig,
+    StudyMode,
+)
 from icframe.llm import LiteLLMClient, LLMClient
 from icframe.reports import render_html_report
 from icframe.reports.view_models import run_view_model, study_view_model
@@ -48,6 +61,7 @@ class Job:
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
     error: str | None = None
+    progress: dict[str, Any] = field(default_factory=dict)
     cancel_event: threading.Event = field(default_factory=threading.Event)
 
     def payload(self) -> dict[str, Any]:
@@ -59,6 +73,7 @@ class Job:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "error": self.error,
+            "progress": dict(self.progress),
         }
 
     def catalog_payload(self) -> dict[str, Any]:
@@ -90,12 +105,78 @@ class Job:
 
 
 class CancellableArtifactObserver(ArtifactObserver):
-    def __init__(self, *args: Any, cancel_event: threading.Event, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *args: Any,
+        cancel_event: threading.Event,
+        progress_callback,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(*args, **kwargs)
         self.cancel_event = cancel_event
+        self.progress_callback = progress_callback
+        self.llm_progress: dict[str, Any] = {
+            "attempted": 0,
+            "failed": 0,
+            "total_tokens": 0,
+            "cost": 0.0,
+        }
+        self.recent_errors: list[str] = []
 
     def cancelled(self) -> bool:
         return self.cancel_event.is_set()
+
+    def start(self, context: dict[str, Any]) -> None:
+        super().start(context)
+        self.progress_callback(
+            steps_completed=0,
+            steps_planned=int(context["spec"]["experiment"]["steps"]),
+            metrics={},
+            llm={"attempted": 0, "failed": 0, "total_tokens": 0, "cost": 0.0},
+            recent_errors=[],
+        )
+
+    def checkpoint(self, value: Checkpoint) -> None:
+        super().checkpoint(value)
+        self.progress_callback(steps_completed=value.step, metrics=dict(value.metrics))
+
+    def decision(self, value) -> None:
+        super().decision(value)
+        if value.llm_call is None:
+            return
+        current = dict(self.llm_progress)
+        current["attempted"] = int(current.get("attempted", 0)) + 1
+        current["total_tokens"] = int(current.get("total_tokens", 0)) + int(
+            value.llm_call.get("total_tokens", 0) or 0
+        )
+        if value.llm_call.get("status") == "failed":
+            current["failed"] = int(current.get("failed", 0)) + 1
+        failure = value.llm_call.get("failure_classification") or value.llm_call.get("error")
+        if failure:
+            self.recent_errors = [*self.recent_errors, str(failure)][-5:]
+        cost = value.llm_call.get("estimated_cost")
+        current["cost"] = (
+            None
+            if cost is None or current.get("cost") is None
+            else float(current.get("cost", 0.0)) + float(cost)
+        )
+        self.llm_progress = current
+        self.progress_callback(llm=current, recent_errors=list(self.recent_errors))
+
+    def finish(self, value: RunSummary) -> None:
+        super().finish(value)
+        self.progress_callback(
+            steps_completed=value.steps_completed,
+            metrics=dict(value.metrics),
+            llm={
+                "attempted": value.llm_usage.attempted,
+                "failed": value.llm_usage.failed,
+                "malformed": value.llm_usage.malformed,
+                "invalid": value.llm_usage.invalid,
+                "total_tokens": value.llm_usage.total_tokens,
+                "cost": value.llm_usage.estimated_cost_usd,
+            },
+        )
 
 
 class JobManager:
@@ -140,11 +221,16 @@ class JobManager:
 
     def get(self, job_id: str) -> Job | None:
         with self.lock:
-            return self.jobs.get(job_id)
+            job = self.jobs.get(job_id)
+            if job is not None:
+                self._refresh_study_progress(job)
+            return job
 
     def list(self) -> list[dict[str, Any]]:
         with self.lock:
             jobs = sorted(self.jobs.values(), key=lambda item: item.created_at, reverse=True)
+            for job in jobs:
+                self._refresh_study_progress(job)
             return [item.payload() for item in jobs]
 
     def catalog_rows(self, kind: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -202,6 +288,7 @@ class JobManager:
                 job.id,
                 retention,
                 cancel_event=job.cancel_event,
+                progress_callback=lambda **values: self._progress(job, **values),
             )
             run_experiment(
                 pack,
@@ -288,6 +375,26 @@ class JobManager:
             job.updated_at = time.time()
             if status not in {RunStatus.QUEUED, RunStatus.RUNNING}:
                 self._prune_completed_jobs()
+
+    def _progress(self, job: Job, **values: Any) -> None:
+        with self.lock:
+            job.progress.update(values)
+            job.updated_at = time.time()
+
+    def _refresh_study_progress(self, job: Job) -> None:
+        if job.kind != "study" or job.status is not RunStatus.RUNNING:
+            return
+        path = self.artifact_root / "studies" / job.id / "trials.jsonl"
+        if not path.exists():
+            return
+        try:
+            completed = sum(1 for line in path.open() if line.strip())
+        except OSError:
+            return
+        job.progress.update(
+            trials_completed=completed,
+            trials_planned=int(job.request.get("trials", 0) or 0),
+        )
 
     def _prune_completed_jobs(self) -> None:
         completed = sorted(
@@ -474,20 +581,53 @@ class ICFrameUIHandler(BaseHTTPRequestHandler):
 
     def _run_get(self, path: str) -> None:
         suffix = path.removeprefix("/api/runs/").strip("/")
+        if suffix.endswith("/llm-calls"):
+            run_id = suffix.removesuffix("/llm-calls").strip("/")
+            self._llm_calls_get(run_id)
+            return
         report = suffix.endswith("/report")
         run_id = suffix.removesuffix("/report").strip("/")
         summary = self.jobs.catalog.get_run(run_id)
         if summary is None:
             self._send_error(HTTPStatus.NOT_FOUND, "run not found")
         elif report:
-            self._send_html(render_html_report(summary))
+            manifest, spec = _artifact_context(self.jobs.artifact_root, "runs", run_id)
+            self._send_html(render_html_report(summary, manifest=manifest, spec=spec))
         else:
+            manifest, spec = _artifact_context(self.jobs.artifact_root, "runs", run_id)
             self._send_json(
                 {
                     "summary": summary.model_dump(mode="json"),
-                    "view": run_view_model(summary).model_dump(mode="json"),
+                    "view": run_view_model(summary, manifest, spec).model_dump(mode="json"),
                 }
             )
+
+    def _llm_calls_get(self, run_id: str) -> None:
+        path = self.jobs.artifact_root / "runs" / run_id / "llm_calls.jsonl"
+        run_exists = (self.jobs.artifact_root / "runs" / run_id).is_dir()
+        if not run_exists:
+            self._send_error(HTTPStatus.NOT_FOUND, "run not found")
+            return
+        pagination = _pagination(parse_qs(urlparse(self.path).query), default_limit=50)
+        if pagination.limit > 100:
+            raise ValueError("limit must be less than or equal to 100")
+        calls = []
+        if path.exists():
+            for line in path.read_text().splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    calls.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        self._send_json(
+            {
+                "calls": calls[pagination.offset : pagination.offset + pagination.limit],
+                "total": len(calls),
+                "limit": pagination.limit,
+                "offset": pagination.offset,
+            }
+        )
 
     def _study_get(self, path: str) -> None:
         suffix = path.removeprefix("/api/studies/").strip("/")
@@ -498,9 +638,7 @@ class ICFrameUIHandler(BaseHTTPRequestHandler):
                 return
             query = parse_qs(urlparse(self.path).query)
             pagination = _pagination(query, default_limit=200)
-            trials = self.jobs.catalog.list_trials(
-                study_id, pagination.limit, pagination.offset
-            )
+            trials = self.jobs.catalog.list_trials(study_id, pagination.limit, pagination.offset)
             self._send_json(
                 {
                     "trials": [trial.model_dump(mode="json") for trial in trials],
@@ -516,12 +654,14 @@ class ICFrameUIHandler(BaseHTTPRequestHandler):
         if summary is None:
             self._send_error(HTTPStatus.NOT_FOUND, "study not found")
         elif report:
-            self._send_html(render_html_report(summary))
+            manifest, spec = _artifact_context(self.jobs.artifact_root, "studies", study_id)
+            self._send_html(render_html_report(summary, manifest=manifest, spec=spec))
         else:
+            manifest, spec = _artifact_context(self.jobs.artifact_root, "studies", study_id)
             self._send_json(
                 {
                     "summary": summary.model_dump(mode="json"),
-                    "view": study_view_model(summary).model_dump(mode="json"),
+                    "view": study_view_model(summary, manifest, spec).model_dump(mode="json"),
                 }
             )
 
@@ -717,9 +857,7 @@ def _optional_float(value: Any) -> float | None:
     return None if value in {None, ""} else float(value)
 
 
-def _pagination(
-    query: dict[str, list[str]], *, default_limit: int = 100
-) -> PaginationQuery:
+def _pagination(query: dict[str, list[str]], *, default_limit: int = 100) -> PaginationQuery:
     return PaginationQuery.model_validate(
         {
             "limit": query.get("limit", [str(default_limit)])[0],
@@ -734,3 +872,27 @@ def _validation_message(exc: Exception) -> str:
         location = ".".join(str(item) for item in error["loc"])
         return f"{location}: {error['msg']}" if location else str(error["msg"])
     return str(exc)
+
+
+def _artifact_context(
+    root: Path, kind: str, artifact_id: str
+) -> tuple[DomainPackManifest | None, IncentiveSpec | None]:
+    directory = root / kind / artifact_id
+    spec = None
+    manifest = None
+    spec_path = directory / "spec.json"
+    if spec_path.exists():
+        try:
+            spec = IncentiveSpec.model_validate_json(spec_path.read_text())
+        except (OSError, ValidationError):
+            spec = None
+    for name in ("domain_pack_manifest.json", "pack.json"):
+        path = directory / name
+        if not path.exists():
+            continue
+        try:
+            manifest = DomainPackManifest.model_validate_json(path.read_text())
+        except (OSError, ValidationError):
+            manifest = None
+        break
+    return manifest, spec

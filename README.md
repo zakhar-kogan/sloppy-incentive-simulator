@@ -11,10 +11,11 @@ uv run icframe run public_goods --seed 7
 uv run icframe ui
 ```
 
-Open `http://127.0.0.1:8765`. The workbench supports exact experiment parameters,
-seed batches, bounded Optuna studies, comparisons, cancellation, charts, and
-self-contained report export. Run and study artifacts live under `.artifacts/icframe`;
-`catalog.sqlite3` is only a rebuildable index.
+Open `http://127.0.0.1:8765`. The v0.4.1 workbench keeps Setup independent from Results and
+supports exact experiment parameters, seed batches, bounded Optuna studies, interpreted
+metrics, independent charts, exercised-mechanics inspection, agent statistics, redacted LLM
+calls, comparisons, cancellation, and self-contained report export. Run and study artifacts
+live under `.artifacts/icframe`; `catalog.sqlite3` is only a rebuildable index.
 
 ## Optional Integrations
 

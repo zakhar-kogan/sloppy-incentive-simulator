@@ -11,15 +11,25 @@ from .core import (
     run_experiment,
 )
 from .domain.incentive_spec import IncentiveSpec, load_incentive_spec
-from .domain.run import ParameterRange, RunConfig, RunSummary, StudyConfig, StudySummary
+from .domain.run import (
+    AgentStatistics,
+    LLMUsageSummary,
+    ParameterRange,
+    RunConfig,
+    RunSummary,
+    StudyConfig,
+    StudySummary,
+)
 from .llm import LiteLLMClient
 from .replay import replay_run
 from .study import run_study
 from .version import __version__
 
 __all__ = [
+    "AgentStatistics",
     "CompilationError",
     "IncentiveSpec",
+    "LLMUsageSummary",
     "LiteLLMClient",
     "LoadedDomainPack",
     "ParameterRange",

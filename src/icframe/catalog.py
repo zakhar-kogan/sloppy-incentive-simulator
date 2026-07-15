@@ -29,7 +29,7 @@ class Catalog:
             return
         connection = _connection
         connection.execute(
-                """
+            """
                 INSERT INTO runs (
                     id, pack_id, status, seed, retention, steps, feasible,
                     parameters_json, objectives_json, created_at, completed_at,
@@ -44,22 +44,22 @@ class Catalog:
                     artifact_path=excluded.artifact_path,
                     summary_json=excluded.summary_json
                 """,
-                (
-                    summary.run_id,
-                    summary.pack_id,
-                    summary.status.value,
-                    summary.seed,
-                    summary.retention.value,
-                    summary.steps_completed,
-                    int(summary.feasible),
-                    json.dumps(summary.parameters, sort_keys=True),
-                    json.dumps(summary.objectives, sort_keys=True),
-                    _created_at(summary.artifacts.get("manifest")),
-                    _manifest_value(summary.artifacts.get("manifest"), "completed_at"),
-                    str(self.root / "runs" / summary.run_id),
-                    summary.model_dump_json(),
-                ),
-            )
+            (
+                summary.run_id,
+                summary.pack_id,
+                summary.status.value,
+                summary.seed,
+                summary.retention.value,
+                summary.steps_completed,
+                int(summary.feasible),
+                json.dumps(summary.parameters, sort_keys=True),
+                json.dumps(summary.objectives, sort_keys=True),
+                _created_at(summary.artifacts.get("manifest")),
+                _manifest_value(summary.artifacts.get("manifest"), "completed_at"),
+                str(self.root / "runs" / summary.run_id),
+                summary.model_dump_json(),
+            ),
+        )
         connection.execute(
             "DELETE FROM metrics WHERE owner_type='run' AND owner_id=?",
             (summary.run_id,),
@@ -81,7 +81,7 @@ class Catalog:
             return
         connection = _connection
         connection.execute(
-                """
+            """
                 INSERT INTO studies (
                     id, pack_id, status, mode, trial_count, created_at,
                     completed_at, parameters_json, objectives_json,
@@ -96,20 +96,20 @@ class Catalog:
                     artifact_path=excluded.artifact_path,
                     summary_json=excluded.summary_json
                 """,
-                (
-                    summary.study_id,
-                    summary.pack_id,
-                    summary.status.value,
-                    summary.mode.value,
-                    summary.trial_count,
-                    _created_at(summary.artifacts.get("manifest")),
-                    _manifest_value(summary.artifacts.get("manifest"), "completed_at"),
-                    json.dumps(summary.parameters, sort_keys=True),
-                    json.dumps(summary.objectives, sort_keys=True),
-                    str(self.root / "studies" / summary.study_id),
-                    summary.model_dump_json(),
-                ),
-            )
+            (
+                summary.study_id,
+                summary.pack_id,
+                summary.status.value,
+                summary.mode.value,
+                summary.trial_count,
+                _created_at(summary.artifacts.get("manifest")),
+                _manifest_value(summary.artifacts.get("manifest"), "completed_at"),
+                json.dumps(summary.parameters, sort_keys=True),
+                json.dumps(summary.objectives, sort_keys=True),
+                str(self.root / "studies" / summary.study_id),
+                summary.model_dump_json(),
+            ),
+        )
 
     def replace_trials(
         self,
@@ -125,52 +125,58 @@ class Catalog:
         connection = _connection
         connection.execute("DELETE FROM trials WHERE study_id=?", (study_id,))
         connection.executemany(
-                """
+            """
                 INSERT INTO trials (
                     study_id, number, feasible, parameters_json,
                     objectives_json, record_json
                 )
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                [
-                    (
-                        study_id,
-                        trial.number,
-                        int(trial.feasible),
-                        json.dumps(trial.parameters, sort_keys=True),
-                        json.dumps(trial.objective_values, sort_keys=True),
-                        trial.model_dump_json(),
-                    )
-                    for trial in trials
-                ],
-            )
+            [
+                (
+                    study_id,
+                    trial.number,
+                    int(trial.feasible),
+                    json.dumps(trial.parameters, sort_keys=True),
+                    json.dumps(trial.objective_values, sort_keys=True),
+                    trial.model_dump_json(),
+                )
+                for trial in trials
+            ],
+        )
 
     def list_runs(self, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
         with self._connect() as connection:
             rows = connection.execute(
                 """
                 SELECT id, pack_id, status, seed, retention, steps, feasible,
-                       parameters_json, objectives_json, created_at, completed_at
+                       parameters_json, objectives_json, created_at, completed_at,
+                       summary_json
                 FROM runs ORDER BY created_at DESC LIMIT ? OFFSET ?
                 """,
                 (limit, offset),
             ).fetchall()
-        return [
-            {
-                "id": row[0],
-                "pack_id": row[1],
-                "status": row[2],
-                "seed": row[3],
-                "retention": row[4],
-                "steps_completed": row[5],
-                "feasible": bool(row[6]),
-                "parameters": json.loads(row[7]),
-                "objectives": json.loads(row[8]),
-                "created_at": row[9],
-                "completed_at": row[10],
-            }
-            for row in rows
-        ]
+        results = []
+        for row in rows:
+            summary = RunSummary.model_validate_json(row[11])
+            results.append(
+                {
+                    "id": row[0],
+                    "pack_id": row[1],
+                    "status": row[2],
+                    "seed": row[3],
+                    "retention": row[4],
+                    "steps_completed": row[5],
+                    "feasible": bool(row[6]),
+                    "parameters": json.loads(row[7]),
+                    "objectives": json.loads(row[8]),
+                    "created_at": row[9],
+                    "completed_at": row[10],
+                    "llm_calls": summary.llm_calls,
+                    "estimated_llm_cost_usd": summary.estimated_llm_cost_usd,
+                }
+            )
+        return results
 
     def list_studies(self, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
         with self._connect() as connection:

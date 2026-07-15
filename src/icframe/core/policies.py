@@ -3,11 +3,12 @@ from __future__ import annotations
 import json
 import math
 import random
+import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from icframe.domain.incentive_spec import Archetype, PolicyKind
-from icframe.llm import LLMClient, LLMRequest
+from icframe.llm import LLMClient, LLMRequest, UnknownLLMPricingError
 
 from .types import ActionCandidate, Observation, PolicyChoice, PolicyFeedback
 
@@ -353,17 +354,30 @@ class LLMPolicy(BasePolicy):
             prompt=json.dumps(payload, sort_keys=True),
             temperature=self.llm_config.temperature,
             require_json=self.llm_config.require_json,
+            input_cost_per_million_tokens_usd=(self.llm_config.input_cost_per_million_tokens_usd),
+            output_cost_per_million_tokens_usd=(self.llm_config.output_cost_per_million_tokens_usd),
         )
+        started = time.perf_counter()
         try:
             response = self.client.complete(request)
+        except UnknownLLMPricingError:
+            raise
         except Exception as exc:
             return PolicyChoice(
                 failure=f"llm_error:{type(exc).__name__}",
                 llm_call={
                     "id": call_id,
                     "request_hash": request.request_hash,
+                    "prompt": request.prompt,
                     "error": str(exc),
-                    "performed": False,
+                    "status": "failed",
+                    "failure_classification": type(exc).__name__,
+                    "provider": request.provider,
+                    "model": request.model,
+                    "step": observation.step,
+                    "agent_id": observation.agent_id,
+                    "latency_ms": (time.perf_counter() - started) * 1000.0,
+                    "estimated_cost": None,
                 },
             )
         action = response.parsed.get(self.llm_config.action_field)
@@ -378,6 +392,17 @@ class LLMPolicy(BasePolicy):
             failure = "invalid_llm_action"
         else:
             failure = None
+        if response.error_type and failure is None:
+            failure = f"llm_error:{response.error_type}"
+        status = (
+            "failed"
+            if response.error_type
+            else "completed"
+            if failure is None
+            else "invalid"
+            if failure == "invalid_llm_action"
+            else "malformed"
+        )
         rationale = response.parsed.get("rationale") or response.parsed.get("reason")
         return PolicyChoice(
             action=action if isinstance(action, str) else None,
@@ -397,7 +422,14 @@ class LLMPolicy(BasePolicy):
                 "total_tokens": response.total_tokens,
                 "estimated_cost": response.estimated_cost,
                 "error": response.error_type,
-                "performed": True,
+                "status": status,
+                "failure_classification": failure or response.error_type,
+                "step": observation.step,
+                "agent_id": observation.agent_id,
+                "selected_action": action if isinstance(action, str) else None,
+                "latency_ms": response.latency_ms,
+                "retry_count": response.retry_count,
+                "fallback_used": response.fallback_used,
             },
         )
 

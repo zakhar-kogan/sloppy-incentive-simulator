@@ -12,6 +12,56 @@ pareto_objectives = ["customer_value", "code_quality", "exploit_rate", "governan
 golden_seeds = [19, 23, 31]
 report_metrics = ["trusted_score", "customer_value", "code_quality", "exploit_rate"]
 
+[report.metrics.trusted_score]
+label = "Trusted score"
+description = "Combined customer value, quality, exploitation, and governance objective."
+unit = "score"
+format = "number"
+desired_direction = "maximize"
+category = "outcome"
+headline_order = 0
+chart_group = "outcomes"
+
+[report.metrics.customer_value]
+label = "Customer value"
+description = "Cumulative value delivered to customers."
+unit = "utility"
+format = "number"
+desired_direction = "maximize"
+category = "outcome"
+headline_order = 1
+chart_group = "outcomes"
+
+[report.metrics.code_quality]
+label = "Code quality"
+description = "Cumulative latent code-quality outcome."
+unit = "quality"
+format = "number"
+desired_direction = "maximize"
+category = "outcome"
+headline_order = 2
+chart_group = "outcomes"
+
+[report.metrics.exploit_rate]
+label = "Proxy exploit rate"
+description = "Share of actions that optimize visible proxies at hidden cost."
+unit = "share"
+format = "percent"
+desired_direction = "minimize"
+category = "proxy"
+headline_order = 3
+chart_group = "risk"
+
+[[report.chart_groups]]
+id = "outcomes"
+label = "Product outcomes"
+metrics = ["trusted_score", "customer_value", "code_quality"]
+
+[[report.chart_groups]]
+id = "risk"
+label = "Proxy risk"
+metrics = ["exploit_rate"]
+
 [[parameters]]
 id = "steps"
 label = "Rounds"

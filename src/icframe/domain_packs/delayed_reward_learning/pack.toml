@@ -12,6 +12,41 @@ pareto_objectives = ["total_payoff", "harvest_rate"]
 golden_seeds = [11, 17, 29]
 report_metrics = ["trusted_score", "total_payoff", "harvest_rate"]
 
+[report.metrics.trusted_score]
+label = "Trusted score"
+description = "Combined payoff and harvesting objective."
+unit = "score"
+format = "number"
+desired_direction = "maximize"
+category = "outcome"
+headline_order = 0
+chart_group = "learning"
+
+[report.metrics.total_payoff]
+label = "Total payoff"
+description = "Cumulative payoff collected by all learning agents."
+unit = "reward"
+format = "number"
+desired_direction = "maximize"
+category = "outcome"
+headline_order = 1
+chart_group = "learning"
+
+[report.metrics.harvest_rate]
+label = "Harvest rate"
+description = "Share of decisions that selected the harvest action."
+unit = "share"
+format = "percent"
+desired_direction = "maximize"
+category = "rate"
+headline_order = 2
+chart_group = "learning"
+
+[[report.chart_groups]]
+id = "learning"
+label = "Learning outcomes"
+metrics = ["trusted_score", "total_payoff", "harvest_rate"]
+
 [[parameters]]
 id = "steps"
 label = "Learning steps"
