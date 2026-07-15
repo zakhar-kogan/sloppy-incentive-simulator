@@ -1,0 +1,25 @@
+[execution.local]
+type = "local"
+workers = 4
+
+[execution.nebius]
+type = "nebius_jobs"
+parent_id = "project-id"
+image = "registry/image@sha256:digest"
+bucket = "artifact-bucket"
+subnet_id = "vpcsubnet-id"
+public_ip = true
+platform = "cpu-d3"
+preset = "4vcpu-16gb"
+shard_size = 32
+max_in_flight = 4
+max_attempts = 3
+poll_seconds = 10
+timeout = "1h"
+
+[llm.nebius-token-factory]
+type = "openai_compatible"
+provider = "nebius-token-factory"
+base_url = "https://api.tokenfactory.nebius.com/v1"
+api_key_env = "NEBIUS_API_KEY"
+remote_secret = "mbsec-token-factory-api-key"

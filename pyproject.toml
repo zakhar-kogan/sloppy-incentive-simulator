@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "icframe"
-version = "0.4.1"
+version = "0.5.0"
 description = "Incentive Compatibility Simulation Framework"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -32,6 +32,10 @@ marl = [
 ]
 analytics = [
     "networkx>=3.2",
+]
+nebius = [
+    "boto3>=1.40",
+    "nebius>=0.3.92,<0.4",
 ]
 integrations = [
     "clingo>=5.7",
@@ -80,3 +84,6 @@ indent-style = "space"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "live: opt-in tests that create billable external resources",
+]

@@ -77,10 +77,18 @@ def load_domain_pack(identifier: str | Path) -> LoadedDomainPack:
             f"domain pack {manifest.pack.id} references unknown report metrics: "
             f"{sorted(unknown_report_metrics)}"
         )
+    for preset in manifest.study.presets:
+        unknown_archetypes = set(preset.exclude_archetypes) - set(spec.archetypes)
+        if unknown_archetypes:
+            raise ValueError(
+                f"study preset {preset.id} excludes unknown archetypes: "
+                f"{sorted(unknown_archetypes)}"
+            )
     if not set(manifest.validation.golden_seeds).issubset(spec.experiment.seeds):
         raise ValueError(
             f"domain pack {manifest.pack.id} golden seeds must be declared in experiment.seeds"
         )
+    _validate_pack_presentation(manifest, spec)
     hooks = _load_hooks(manifest.pack.hook)
     return LoadedDomainPack(
         manifest=manifest,
@@ -89,6 +97,46 @@ def load_domain_pack(identifier: str | Path) -> LoadedDomainPack:
         hooks=hooks,
         hook_hash=_hook_hash(hooks),
     )
+
+
+def _validate_pack_presentation(
+    manifest: DomainPackManifest, spec: IncentiveSpec
+) -> None:
+    for template in manifest.population_templates:
+        if template.archetype not in spec.archetypes:
+            raise ValueError(
+                f"population template {template.id} references unknown archetype "
+                f"{template.archetype!r}"
+            )
+    flow = manifest.report.mechanics_flow
+    if flow is None:
+        return
+    transitions = {item.id: item for item in spec.transitions}
+    references = {
+        "action": set(spec.actions.all),
+        "transition": set(transitions),
+        "outcome": set(spec.outcome_space.channels),
+        "metric": set(spec.metrics),
+        "hook": set(spec.hook_config),
+        "enforcement": {
+            transition_id
+            for transition_id, transition in transitions.items()
+            if transition.enforcement is not None
+        },
+    }
+    for owner, evidence in [
+        *[(f"node {item.id}", item.evidence) for item in flow.nodes],
+        *[
+            (f"edge {item.source}->{item.target}", item.evidence)
+            for item in flow.edges
+        ],
+    ]:
+        for value in evidence:
+            kind, marker, reference = value.partition(":")
+            if not marker or kind not in references or reference not in references[kind]:
+                raise ValueError(
+                    f"mechanics flow {owner} has unknown evidence reference {value!r}"
+                )
 
 
 def apply_parameters(

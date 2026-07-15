@@ -9,9 +9,135 @@ hook = "icframe.domain_packs.public_goods.hooks:PublicGoodsHooks"
 single_objective = "trusted_score"
 pareto_objectives = ["social_welfare", "exploit_rate", "governance_cost"]
 
+[[study.presets]]
+id = "returns_and_audits"
+label = "Returns and audits"
+description = "Map shared-resource returns against governance pressure."
+planner = "matrix"
+objectives = ["social_welfare", "exploit_rate", "governance_cost"]
+seeds = [7, 11, 19]
+
+[study.presets.parameter_matrix]
+return_multiplier = [0.8, 1.2, 1.6, 2.0, 2.4]
+audit_probability = [0.0, 0.25, 0.5, 0.75, 1.0]
+
+[study.presets.visualization]
+x_metric = "exploit_rate"
+y_metric = "social_welfare"
+color_metric = "governance_cost"
+
 [validation]
 golden_seeds = [7, 11, 19]
 report_metrics = ["trusted_score", "social_welfare", "exploit_rate", "governance_cost"]
+
+[[population_templates]]
+id = "cooperator"
+label = "Cooperator"
+description = "Contributes to the shared resource and values social welfare."
+archetype = "cooperator"
+count = 1
+[[population_templates]]
+id = "learner"
+label = "Adaptive learner"
+description = "Explores contribution strategies using an epsilon-greedy bandit."
+archetype = "learner"
+count = 1
+[[population_templates]]
+id = "opportunist"
+label = "Opportunist"
+description = "Prioritizes private payoff and may tamper with governance."
+archetype = "opportunist"
+count = 1
+
+[report.mechanics_flow]
+title = "Public-goods causal flow"
+description = "Explanatory projection of contribution, signaling, shared returns, governance, and outcomes."
+[[report.mechanics_flow.stages]]
+id = "choice"
+label = "Participant choice"
+[[report.mechanics_flow.stages]]
+id = "mechanism"
+label = "Shared mechanisms"
+[[report.mechanics_flow.stages]]
+id = "outcome"
+label = "Outcomes"
+[[report.mechanics_flow.nodes]]
+id = "resource_choice"
+label = "Contribute or withhold"
+stage = "choice"
+kind = "action"
+evidence = ["transition:contribute", "transition:withhold"]
+[[report.mechanics_flow.nodes]]
+id = "signal"
+label = "Social signal"
+stage = "choice"
+kind = "action"
+evidence = ["transition:signal"]
+[[report.mechanics_flow.nodes]]
+id = "tamper"
+label = "Governance tampering"
+stage = "choice"
+kind = "action"
+evidence = ["transition:tamper"]
+[[report.mechanics_flow.nodes]]
+id = "shared_return"
+label = "Shared-resource return"
+stage = "mechanism"
+kind = "mechanism"
+evidence = ["hook:return_multiplier", "transition:contribute", "transition:withhold"]
+[[report.mechanics_flow.nodes]]
+id = "governance"
+label = "Audit and enforcement"
+stage = "mechanism"
+kind = "enforcement"
+evidence = ["enforcement:tamper"]
+[[report.mechanics_flow.nodes]]
+id = "payoff"
+label = "Participant payoff"
+stage = "outcome"
+kind = "outcome"
+evidence = ["outcome:agent.payoff"]
+[[report.mechanics_flow.nodes]]
+id = "welfare"
+label = "Social welfare and trust"
+stage = "outcome"
+kind = "outcome"
+evidence = ["outcome:latent.social_welfare", "outcome:social.trust"]
+[[report.mechanics_flow.nodes]]
+id = "governance_cost"
+label = "Governance cost"
+stage = "outcome"
+kind = "outcome"
+evidence = ["outcome:governance.cost"]
+[[report.mechanics_flow.edges]]
+source = "resource_choice"
+target = "shared_return"
+evidence = ["transition:contribute", "transition:withhold"]
+[[report.mechanics_flow.edges]]
+source = "signal"
+target = "welfare"
+evidence = ["transition:signal"]
+[[report.mechanics_flow.edges]]
+source = "tamper"
+target = "governance"
+evidence = ["enforcement:tamper"]
+[[report.mechanics_flow.edges]]
+source = "shared_return"
+target = "payoff"
+evidence = ["hook:return_multiplier"]
+[[report.mechanics_flow.edges]]
+source = "shared_return"
+target = "welfare"
+evidence = ["outcome:latent.social_welfare"]
+[[report.mechanics_flow.edges]]
+source = "governance"
+target = "governance_cost"
+evidence = ["outcome:governance.cost"]
+[[report.mechanics_flow.edges]]
+source = "governance"
+target = "payoff"
+label = "declared sanctions"
+evidence = ["enforcement:tamper"]
 
 [report.metrics.trusted_score]
 label = "Trusted score"
@@ -74,6 +200,11 @@ minimum = 1
 maximum = 100000
 optimizable = false
 step = 1
+quick_values = [
+  { label = "Smoke", value = 5 },
+  { label = "Standard", value = 30 },
+  { label = "Thorough", value = 300 },
+]
 [parameters.target]
 entity = "experiment"
 field = ["steps"]

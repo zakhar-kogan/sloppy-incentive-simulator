@@ -24,6 +24,24 @@ class StudyMode(StrEnum):
     PARETO = "pareto"
 
 
+class PlannerKind(StrEnum):
+    MATRIX = "matrix"
+    RANDOM = "random"
+    OPTUNA = "optuna"
+
+
+class ExecutionProvenance(ICFrameModel):
+    backend: str = "local"
+    backend_profile: str = "local"
+    planner: str | None = None
+    planned_trials: int | None = None
+    completed_trials: int | None = None
+    shard_count: int = 0
+    remote_job_ids: list[str] = Field(default_factory=list)
+    retry_count: int = 0
+    artifact_import_state: str = "local"
+
+
 class RunConfig(ICFrameModel):
     seed: int | None = None
     parameters: dict[str, Scalar] = Field(default_factory=dict)
@@ -75,6 +93,9 @@ class StudyConfig(ICFrameModel):
     artifact_root: Path = Path(".artifacts/icframe")
     study_id: str | None = None
     live_llm: LiveLLMBudget = Field(default_factory=LiveLLMBudget)
+    planner: PlannerKind | None = None
+    planner_seed: int = 0
+    parameter_matrix: dict[str, list[Scalar]] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def mode_objectives(self) -> StudyConfig:
@@ -86,6 +107,10 @@ class StudyConfig(ICFrameModel):
             raise ValueError("study seeds contain duplicates")
         if self.live_llm.enabled and self.workers != 1:
             raise ValueError("live LLM studies require workers=1")
+        if self.planner is PlannerKind.MATRIX and not self.parameter_matrix:
+            raise ValueError("matrix studies require parameter_matrix values")
+        if self.planner is not PlannerKind.MATRIX and self.parameter_matrix:
+            raise ValueError("parameter_matrix requires planner=matrix")
         return self
 
 
@@ -186,6 +211,7 @@ class RunSummary(ICFrameModel):
     duration_seconds: float = 0.0
     error: str | None = None
     artifacts: dict[str, str] = Field(default_factory=dict)
+    execution: ExecutionProvenance = Field(default_factory=ExecutionProvenance)
 
 
 class SeedResult(ICFrameModel):
@@ -228,3 +254,6 @@ class StudySummary(ICFrameModel):
     duration_seconds: float = 0.0
     error: str | None = None
     artifacts: dict[str, str] = Field(default_factory=dict)
+    llm_calls: int = 0
+    estimated_llm_cost_usd: float | None = 0.0
+    execution: ExecutionProvenance = Field(default_factory=ExecutionProvenance)

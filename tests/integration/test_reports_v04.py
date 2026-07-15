@@ -22,4 +22,7 @@ def test_ui_and_static_report_use_the_same_projection(tmp_path) -> None:
     assert "Projection" not in html
     path = write_html_report(tmp_path / "runs" / summary.run_id)
     assert path.exists()
-    assert "ICFRAME report" in path.read_text()
+    exported = path.read_text()
+    assert "ICFRAME report" in exported
+    assert "Causal flow (explanatory)" in exported
+    assert "Executable state machine" in exported

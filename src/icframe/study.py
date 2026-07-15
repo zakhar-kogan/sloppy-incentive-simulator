@@ -5,6 +5,7 @@ import math
 import statistics
 import time
 import uuid
+import warnings
 from collections.abc import Callable
 from concurrent.futures import Future, ProcessPoolExecutor
 from pathlib import Path
@@ -31,6 +32,8 @@ from icframe.domain.incentive_spec import (
     SeedReducer,
 )
 from icframe.domain.run import (
+    ExecutionProvenance,
+    PlannerKind,
     RunConfig,
     RunStatus,
     SeedResult,
@@ -46,6 +49,7 @@ from icframe.llm import (
     LLMResponse,
     UnknownLLMPricingError,
 )
+from icframe.planning import create_study_plan
 
 
 def run_study(
@@ -82,14 +86,27 @@ def _run_study(
     llm_client: LLMClient | None = None,
     cancel_check: Callable[[], bool] | None = None,
 ) -> StudySummary:
+    loaded = pack if isinstance(pack, LoadedDomainPack) else load_domain_pack(pack)
+    cancelled = cancel_check or (lambda: False)
+    _validate_study_config(loaded, config)
+    if config.planner in {PlannerKind.MATRIX, PlannerKind.RANDOM}:
+        return _run_planned_study(
+            loaded,
+            config,
+            llm_client=llm_client,
+            cancel_check=cancelled,
+        )
+    if config.planner is None:
+        warnings.warn(
+            "StudyConfig without planner preserves legacy Optuna behavior in v0.5; "
+            "select planner='matrix' or planner='random' for portable studies",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     try:
         import optuna
     except ImportError as exc:  # pragma: no cover - optional installation
         raise RuntimeError("install icframe[optimize] to run optimization studies") from exc
-
-    loaded = pack if isinstance(pack, LoadedDomainPack) else load_domain_pack(pack)
-    cancelled = cancel_check or (lambda: False)
-    _validate_study_config(loaded, config)
     if isinstance(llm_client, LiteLLMClient) and not config.live_llm.enabled:
         raise ValueError("live LLM studies require explicit call and cost budgets")
     if config.live_llm.enabled and llm_client is None:
@@ -269,6 +286,14 @@ def _run_study(
             "spec": str(study_dir / "spec.json"),
             "pack": str(study_dir / "pack.json"),
         },
+        execution=ExecutionProvenance(
+            backend="local",
+            backend_profile="local",
+            planner=PlannerKind.OPTUNA.value,
+            planned_trials=config.trials,
+            completed_trials=len(records),
+            shard_count=1,
+        ),
     )
     _write_json(study_dir / "summary.json", summary.model_dump(mode="json"))
     terminal_fields = {
@@ -287,6 +312,194 @@ def _run_study(
     catalog = Catalog(config.artifact_root)
     catalog.upsert_study(summary)
     catalog.replace_trials(study_id, records)
+    return summary
+
+
+def _run_planned_study(
+    loaded: LoadedDomainPack,
+    config: StudyConfig,
+    *,
+    llm_client: LLMClient | None,
+    cancel_check: Callable[[], bool],
+) -> StudySummary:
+    if isinstance(llm_client, LiteLLMClient) and not config.live_llm.enabled:
+        raise ValueError("live LLM studies require explicit call and cost budgets")
+    if config.live_llm.enabled and llm_client is None:
+        raise ValueError("live LLM studies require an LLM client")
+    budgeted_client = (
+        _BudgetedLLMClient(
+            llm_client,
+            max_calls=int(config.live_llm.max_calls),
+            max_cost_usd=float(config.live_llm.max_cost_usd),
+        )
+        if config.live_llm.enabled and llm_client is not None
+        else None
+    )
+    effective_llm_client = budgeted_client or llm_client
+    plan = create_study_plan(loaded, config)
+    study_dir = config.artifact_root / "studies" / plan.study_id
+    started = time.perf_counter()
+    lifecycle = ArtifactLifecycle.start(
+        study_dir,
+        {
+            "study_id": plan.study_id,
+            "pack_id": loaded.id,
+            "mode": config.mode.value,
+            "planner": plan.planner.value,
+            "planner_seed": plan.planner_seed,
+            "objectives": config.objectives,
+            "parameters": config.parameters,
+            "seeds": config.seeds,
+            "hook_hash": loaded.hook_hash,
+            "runtime_hash": runtime_hash(loaded.spec, loaded.hook_hash),
+            "trusted_evaluation_hash": trusted_evaluation_hash(loaded.spec),
+            "plan_hash": plan.canonical_hash,
+            "planned_trials": len(plan.trials),
+        },
+        files={
+            "spec.json": loaded.spec.model_dump(mode="json", by_alias=True),
+            "pack.json": loaded.manifest.model_dump(mode="json"),
+            "plan.json": plan.model_dump(mode="json"),
+        },
+    )
+    retained_run_ids: list[str] = []
+    records: list[TrialRecord] = []
+    llm_calls_used = 0
+    llm_cost_used = 0.0
+
+    for trial in plan.trials:
+        if cancel_check() or _budget_exhausted(config, llm_calls_used, llm_cost_used):
+            break
+        try:
+            record = evaluate_trial(
+                loaded,
+                trial.number,
+                trial.parameters,
+                trial.seeds,
+                trial.objectives,
+                effective_llm_client,
+            )
+        except Exception as exc:
+            record = TrialRecord(
+                number=trial.number,
+                parameters=trial.parameters,
+                seeds=[],
+                objective_values={},
+                feasible=False,
+                state="failed",
+                error=f"{type(exc).__name__}: {exc}",
+            )
+        records.append(record)
+        _append_trial(study_dir, record)
+        llm_calls_used, llm_cost_used = _budget_usage(
+            budgeted_client,
+            llm_calls_used + record.llm_calls,
+            _add_cost(llm_cost_used, record.estimated_llm_cost_usd),
+        )
+
+    feasible = [record for record in records if record.feasible and record.state == "complete"]
+    best_trial = _best_trial(loaded, config, feasible)
+    pareto_trials = _pareto_trials(loaded, config, feasible)
+    if not cancel_check():
+        for seed in config.seeds:
+            if _budget_exhausted(config, llm_calls_used, llm_cost_used):
+                break
+            baseline = run_experiment(
+                loaded,
+                RunConfig(
+                    seed=seed,
+                    retention=RetentionProfile.EXPERIMENT,
+                    artifact_root=config.artifact_root,
+                ),
+                llm_client=effective_llm_client,
+            )
+            retained_run_ids.append(baseline.run_id)
+            llm_calls_used, llm_cost_used = _budget_usage(
+                budgeted_client,
+                llm_calls_used + baseline.llm_calls,
+                _add_cost(llm_cost_used, baseline.estimated_llm_cost_usd),
+            )
+    if not cancel_check() and config.mode is StudyMode.SINGLE and best_trial is not None:
+        winner = next(item for item in feasible if item.number == best_trial)
+        for seed in config.seeds:
+            if _budget_exhausted(config, llm_calls_used, llm_cost_used):
+                break
+            retained = run_experiment(
+                loaded,
+                RunConfig(
+                    seed=seed,
+                    parameters=winner.parameters,
+                    retention=RetentionProfile.EXPERIMENT,
+                    artifact_root=config.artifact_root,
+                ),
+                llm_client=effective_llm_client,
+            )
+            retained_run_ids.append(retained.run_id)
+            llm_calls_used, llm_cost_used = _budget_usage(
+                budgeted_client,
+                llm_calls_used + retained.llm_calls,
+                _add_cost(llm_cost_used, retained.estimated_llm_cost_usd),
+            )
+
+    preview_numbers = {record.number for record in records[:200]}
+    if best_trial is not None:
+        preview_numbers.add(best_trial)
+    preview_numbers.update(pareto_trials[:50])
+    artifacts = {
+        "manifest": str(study_dir / "manifest.json"),
+        "summary": str(study_dir / "summary.json"),
+        "trials": str(study_dir / "trials.jsonl"),
+        "spec": str(study_dir / "spec.json"),
+        "pack": str(study_dir / "pack.json"),
+        "plan": str(study_dir / "plan.json"),
+    }
+    summary = StudySummary(
+        study_id=plan.study_id,
+        pack_id=loaded.id,
+        mode=config.mode,
+        status=RunStatus.CANCELLED if cancel_check() else RunStatus.COMPLETED,
+        objectives=config.objectives,
+        parameters=config.parameters,
+        seeds=config.seeds,
+        trial_count=len(records),
+        trials=[record for record in records if record.number in preview_numbers],
+        best_trial=best_trial,
+        pareto_trials=pareto_trials[:200],
+        retained_run_ids=retained_run_ids,
+        duration_seconds=time.perf_counter() - started,
+        artifacts=artifacts,
+        llm_calls=sum(record.llm_calls for record in records),
+        estimated_llm_cost_usd=sum(
+            record.estimated_llm_cost_usd or 0.0 for record in records
+        ),
+        execution=ExecutionProvenance(
+            backend="local",
+            backend_profile="local",
+            planner=plan.planner.value,
+            planned_trials=len(plan.trials),
+            completed_trials=len(records),
+            shard_count=1,
+            artifact_import_state="local",
+        ),
+    )
+    _write_json(study_dir / "summary.json", summary.model_dump(mode="json"))
+    terminal_fields = {
+        "trial_count": len(records),
+        "best_trial": best_trial,
+        "pareto_trials": pareto_trials,
+        "retained_run_ids": retained_run_ids,
+        "artifacts": artifacts,
+    }
+    transitioned = (
+        lifecycle.cancel(**terminal_fields)
+        if summary.status is RunStatus.CANCELLED
+        else lifecycle.complete(**terminal_fields)
+    )
+    if not transitioned:
+        raise RuntimeError("study manifest could not be terminalized")
+    catalog = Catalog(config.artifact_root)
+    catalog.upsert_study(summary)
+    catalog.replace_trials(summary.study_id, records)
     return summary
 
 
@@ -439,6 +652,26 @@ def _evaluate_trial(
         estimated_llm_cost_usd=_sum_costs([seed.estimated_llm_cost_usd for seed in seed_results]),
         runtime_hash=plan.runtime_hash,
         hook_hash=plan.hook_hash,
+    )
+
+
+def evaluate_trial(
+    pack_source: LoadedDomainPack | str,
+    number: int,
+    parameters: dict[str, Scalar],
+    seeds: list[int],
+    objectives: list[str],
+    llm_client: LLMClient | None = None,
+) -> TrialRecord:
+    """Evaluate one explicit trial without retaining per-step artifacts."""
+
+    return _evaluate_trial(
+        pack_source,
+        number,
+        parameters,
+        seeds,
+        objectives,
+        llm_client,
     )
 
 

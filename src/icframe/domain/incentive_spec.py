@@ -540,6 +540,11 @@ class ParameterTarget(SpecModel):
         return self
 
 
+class QuickValue(SpecModel):
+    label: str = Field(min_length=1)
+    value: Scalar
+
+
 class GuidedParameter(SpecModel):
     id: str
     label: str
@@ -554,6 +559,7 @@ class GuidedParameter(SpecModel):
     step: float | int | None = None
     slider: bool = True
     choices: list[Scalar] = Field(default_factory=list)
+    quick_values: list[QuickValue] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def bounds_match_type(self) -> GuidedParameter:
@@ -576,6 +582,13 @@ class GuidedParameter(SpecModel):
             raise ValueError("choice parameters require choices")
         if self.type is not ParameterType.CHOICE and self.choices:
             raise ValueError("choices are only valid for choice parameters")
+        for item in self.quick_values:
+            if self.type not in {ParameterType.FLOAT, ParameterType.INTEGER}:
+                raise ValueError("quick values are only valid for numeric parameters")
+            if not isinstance(item.value, int | float):
+                raise ValueError("numeric parameter quick values must be numbers")
+            if item.value < self.minimum or item.value > self.maximum:
+                raise ValueError(f"quick value {item.label} is outside parameter bounds")
         return self
 
 
@@ -587,9 +600,46 @@ class DomainPackHeader(SpecModel):
     hook: str | None = None
 
 
+class StudyVisualization(SpecModel):
+    x_metric: str
+    y_metric: str
+    color_metric: str | None = None
+
+
+class StudyPreset(SpecModel):
+    id: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    description: str = ""
+    planner: Literal["matrix", "random"] = "matrix"
+    objectives: list[str] = Field(min_length=1)
+    seeds: list[int] = Field(min_length=1)
+    parameter_matrix: dict[str, list[Scalar]] = Field(default_factory=dict)
+    parameters: list[str] = Field(default_factory=list)
+    trials: int | None = Field(default=None, ge=1)
+    visualization: StudyVisualization | None = None
+    exclude_archetypes: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def planner_contract(self) -> StudyPreset:
+        if len(self.seeds) != len(set(self.seeds)):
+            raise ValueError("study preset seeds contain duplicates")
+        if self.planner == "matrix":
+            if not self.parameter_matrix:
+                raise ValueError("matrix study presets require parameter_matrix")
+            if self.trials is not None:
+                raise ValueError("matrix study presets derive trials from their matrix")
+        else:
+            if not self.parameters or self.trials is None:
+                raise ValueError("random study presets require parameters and trials")
+            if self.parameter_matrix:
+                raise ValueError("random study presets cannot define parameter_matrix")
+        return self
+
+
 class StudyDefaults(SpecModel):
     single_objective: str
     pareto_objectives: list[str] = Field(min_length=2)
+    presets: list[StudyPreset] = Field(default_factory=list)
 
 
 class ValidationDefaults(SpecModel):
@@ -614,9 +664,72 @@ class ReportChartGroup(SpecModel):
     metrics: list[str] = Field(min_length=1)
 
 
+class PopulationTemplate(SpecModel):
+    id: str
+    label: str
+    description: str = ""
+    archetype: str
+    count: int = Field(default=1, ge=1)
+
+
+class MechanicsFlowStage(SpecModel):
+    id: str
+    label: str
+
+
+class MechanicsFlowNode(SpecModel):
+    id: str
+    label: str
+    stage: str
+    kind: Literal["action", "mechanism", "outcome", "enforcement", "learning"]
+    description: str = ""
+    evidence: list[str] = Field(min_length=1)
+
+
+class MechanicsFlowEdge(SpecModel):
+    source: str
+    target: str
+    label: str = ""
+    evidence: list[str] = Field(default_factory=list)
+
+
+class MechanicsFlow(SpecModel):
+    title: str = "Causal flow"
+    description: str = ""
+    stages: list[MechanicsFlowStage] = Field(min_length=2)
+    nodes: list[MechanicsFlowNode] = Field(min_length=2)
+    edges: list[MechanicsFlowEdge] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def graph_references_are_valid(self) -> MechanicsFlow:
+        stage_ids = [item.id for item in self.stages]
+        node_ids = [item.id for item in self.nodes]
+        if len(stage_ids) != len(set(stage_ids)):
+            raise ValueError("mechanics flow stage ids must be unique")
+        if len(node_ids) != len(set(node_ids)):
+            raise ValueError("mechanics flow node ids must be unique")
+        unknown_stages = {item.stage for item in self.nodes} - set(stage_ids)
+        if unknown_stages:
+            raise ValueError(
+                f"mechanics flow nodes reference unknown stages: {sorted(unknown_stages)}"
+            )
+        unknown_nodes = {
+            value
+            for edge in self.edges
+            for value in (edge.source, edge.target)
+            if value not in set(node_ids)
+        }
+        if unknown_nodes:
+            raise ValueError(
+                f"mechanics flow edges reference unknown nodes: {sorted(unknown_nodes)}"
+            )
+        return self
+
+
 class ReportConfig(SpecModel):
     metrics: dict[str, ReportMetric] = Field(default_factory=dict)
     chart_groups: list[ReportChartGroup] = Field(default_factory=list)
+    mechanics_flow: MechanicsFlow | None = None
 
 
 class DomainPackManifest(SpecModel):
@@ -624,6 +737,7 @@ class DomainPackManifest(SpecModel):
     study: StudyDefaults
     validation: ValidationDefaults
     parameters: list[GuidedParameter] = Field(default_factory=list)
+    population_templates: list[PopulationTemplate] = Field(default_factory=list)
     report: ReportConfig = Field(default_factory=ReportConfig)
 
     @field_validator("parameters")
@@ -632,6 +746,16 @@ class DomainPackManifest(SpecModel):
         ids = [item.id for item in value]
         if len(ids) != len(set(ids)):
             raise ValueError("domain pack parameter ids must be unique")
+        return value
+
+    @field_validator("population_templates")
+    @classmethod
+    def unique_population_template_ids(
+        cls, value: list[PopulationTemplate]
+    ) -> list[PopulationTemplate]:
+        ids = [item.id for item in value]
+        if len(ids) != len(set(ids)):
+            raise ValueError("population template ids must be unique")
         return value
 
     @model_validator(mode="after")
@@ -656,6 +780,40 @@ class DomainPackManifest(SpecModel):
                 raise ValueError(
                     f"report metric {name} references unknown chart group {metric.chart_group!r}"
                 )
+        parameter_ids = {item.id for item in self.parameters}
+        metric_ids = set(self.report.metrics)
+        preset_ids = [item.id for item in self.study.presets]
+        if len(preset_ids) != len(set(preset_ids)):
+            raise ValueError("study preset ids must be unique")
+        for preset in self.study.presets:
+            selected = set(preset.parameter_matrix) | set(preset.parameters)
+            unknown_parameters = selected - parameter_ids
+            if unknown_parameters:
+                raise ValueError(
+                    f"study preset {preset.id} references unknown parameters: "
+                    f"{sorted(unknown_parameters)}"
+                )
+            unknown_objectives = set(preset.objectives) - {
+                self.study.single_objective,
+                *self.study.pareto_objectives,
+            }
+            if unknown_objectives:
+                raise ValueError(
+                    f"study preset {preset.id} references unknown objectives: "
+                    f"{sorted(unknown_objectives)}"
+                )
+            if preset.visualization is not None:
+                selected_metrics = {
+                    preset.visualization.x_metric,
+                    preset.visualization.y_metric,
+                    preset.visualization.color_metric,
+                } - {None}
+                missing_metrics = selected_metrics - metric_ids
+                if missing_metrics:
+                    raise ValueError(
+                        f"study preset {preset.id} visualization references unknown metrics: "
+                        f"{sorted(missing_metrics)}"
+                    )
         return self
 
 

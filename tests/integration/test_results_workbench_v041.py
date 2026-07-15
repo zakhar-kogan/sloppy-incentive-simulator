@@ -52,6 +52,8 @@ def test_report_contracts_aggregates_and_mechanics_are_reproducible(tmp_path) ->
         item.id for item in pack.spec.transitions
     }
     assert sum(item.frequency for item in view.mechanics.transitions) == summary.event_count
+    assert view.mechanics.causal_flow is not None
+    assert all(item.evidence for item in view.mechanics.causal_flow.nodes)
     events = [json.loads(line) for line in (run_dir / "events.jsonl").read_text().splitlines()]
     for agent in summary.agents:
         actor_events = [item for item in events if item["actor_id"] == agent.id]
