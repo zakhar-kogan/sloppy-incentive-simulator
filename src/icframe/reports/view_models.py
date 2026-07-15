@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field
 
@@ -8,6 +8,7 @@ from icframe.domain.base import ICFrameModel, Scalar
 from icframe.domain.incentive_spec import (
     DomainPackManifest,
     IncentiveSpec,
+    MechanicsFlow,
     MetricCategory,
     MetricFormat,
     MetricType,
@@ -88,16 +89,26 @@ class MechanicsTransitionView(ICFrameModel):
 class MechanicsView(ICFrameModel):
     states: list[str] = Field(default_factory=list)
     transitions: list[MechanicsTransitionView] = Field(default_factory=list)
+    causal_flow: MechanicsFlow | None = None
 
 
 class TrialView(ICFrameModel):
     number: int
     parameters: dict[str, Scalar]
     objectives: dict[str, float]
+    metrics: dict[str, float] = Field(default_factory=dict)
     feasible: bool
     state: str
     winner: bool = False
     frontier: bool = False
+
+
+class ParameterInsightView(ICFrameModel):
+    parameter: str
+    minimum: float
+    maximum: float
+    winner_value: Scalar | None = None
+    text: str
 
 
 class RunViewModel(ICFrameModel):
@@ -124,6 +135,9 @@ class RunViewModel(ICFrameModel):
     llm: LLMUsageSummary
     has_llm: bool = False
     diagnostics: list[str] = Field(default_factory=list)
+    parameters: dict[str, Scalar] = Field(default_factory=dict)
+    optimizable_parameters: list[str] = Field(default_factory=list)
+    composition: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class StudyViewModel(ICFrameModel):
@@ -136,10 +150,15 @@ class StudyViewModel(ICFrameModel):
     findings: list[FindingView]
     objectives: list[str]
     objective_presentations: list[MetricView]
+    metric_presentations: list[MetricView] = Field(default_factory=list)
+    visualizations: list[dict[str, str | None]] = Field(default_factory=list)
     trials: list[TrialView]
     best_trial: int | None
     pareto_trials: list[int]
     retained_run_ids: list[str]
+    parameter_insights: list[ParameterInsightView] = Field(default_factory=list)
+    winner_parameters: dict[str, Scalar] = Field(default_factory=dict)
+    composition: list[dict[str, Any]] = Field(default_factory=list)
 
 
 def run_view_model(
@@ -201,6 +220,9 @@ def run_view_model(
         facts={
             "Steps": f"{summary.steps_completed:,} / {summary.steps_planned:,}",
             "Events": f"{summary.event_count:,}",
+            "Backend": summary.execution.backend_profile,
+            "Retries": f"{summary.execution.retry_count:,}",
+            "Artifact import": summary.execution.artifact_import_state,
             "Duration": f"{summary.duration_seconds:.3f}s",
             "Replay": "ready" if summary.replayable else "unavailable",
         },
@@ -237,7 +259,11 @@ def run_view_model(
             for item in summary.agents
         ],
         constraints=constraints,
-        mechanics=_mechanics(spec, summary.transition_counts),
+        mechanics=_mechanics(
+            spec,
+            summary.transition_counts,
+            manifest.report.mechanics_flow if manifest is not None else None,
+        ),
         llm=llm,
         has_llm=bool(
             llm.attempted
@@ -247,6 +273,13 @@ def run_view_model(
             )
         ),
         diagnostics=diagnostics,
+        parameters=dict(summary.parameters),
+        optimizable_parameters=(
+            [item.id for item in manifest.parameters if item.optimizable]
+            if manifest is not None
+            else []
+        ),
+        composition=_composition(spec),
     )
 
 
@@ -283,6 +316,30 @@ def study_view_model(
                 evidence=[f"trial:{summary.best_trial}"],
             )
         )
+    winner = next((item for item in summary.trials if item.number == summary.best_trial), None)
+    insights = []
+    for parameter in summary.parameters:
+        values = [
+            float(item.parameters[parameter])
+            for item in summary.trials
+            if item.feasible and isinstance(item.parameters.get(parameter), int | float)
+        ]
+        if not values:
+            continue
+        winner_value = winner.parameters.get(parameter) if winner is not None else None
+        insights.append(
+            ParameterInsightView(
+                parameter=parameter,
+                minimum=min(values),
+                maximum=max(values),
+                winner_value=winner_value,
+                text=(
+                    f"Feasible trials observed {parameter} from {min(values):g} to "
+                    f"{max(values):g}. This is an association within the tested search space, "
+                    "not a causal estimate."
+                ),
+            )
+        )
     return StudyViewModel(
         id=summary.study_id,
         title=f"{summary.pack_id} study",
@@ -290,6 +347,22 @@ def study_view_model(
         subtitle=f"{summary.mode.value} / {summary.trial_count:,} trials",
         facts={
             "Trials": f"{summary.trial_count:,}",
+            "Plan": (
+                f"{summary.execution.completed_trials or summary.trial_count:,} / "
+                f"{summary.execution.planned_trials or summary.trial_count:,} complete"
+            ),
+            "Planner": summary.execution.planner or "legacy",
+            "Backend": summary.execution.backend_profile,
+            "Shards": f"{summary.execution.shard_count:,}",
+            "Retries": f"{summary.execution.retry_count:,}",
+            "Artifact import": summary.execution.artifact_import_state,
+            "Remote jobs": f"{len(summary.execution.remote_job_ids):,}",
+            "LLM calls": f"{summary.llm_calls:,}",
+            "LLM cost": (
+                f"${summary.estimated_llm_cost_usd:.4f}"
+                if summary.estimated_llm_cost_usd is not None
+                else "unavailable"
+            ),
             "Seeds": ", ".join(str(seed) for seed in summary.seeds),
             "Parameters": f"{len(summary.parameters):,}",
             "Duration": f"{summary.duration_seconds:.3f}s",
@@ -297,11 +370,21 @@ def study_view_model(
         findings=findings,
         objectives=list(summary.objectives),
         objective_presentations=objective_presentations,
+        metric_presentations=[
+            _metric_view(name, 0.0, manifest, spec)
+            for name in (spec.metrics if spec is not None else {})
+        ],
+        visualizations=[
+            preset.visualization.model_dump(mode="json")
+            for preset in (manifest.study.presets if manifest is not None else [])
+            if preset.visualization is not None
+        ],
         trials=[
             TrialView(
                 number=item.number,
                 parameters=dict(item.parameters),
                 objectives=dict(item.objective_values),
+                metrics=_trial_metrics(item),
                 feasible=item.feasible,
                 state=item.state,
                 winner=item.number == summary.best_trial,
@@ -312,7 +395,34 @@ def study_view_model(
         best_trial=summary.best_trial,
         pareto_trials=list(summary.pareto_trials),
         retained_run_ids=list(summary.retained_run_ids),
+        parameter_insights=insights,
+        winner_parameters=dict(winner.parameters) if winner is not None else {},
+        composition=_composition(spec),
     )
+
+
+def _trial_metrics(trial) -> dict[str, float]:
+    names = {name for seed in trial.seeds for name in seed.metrics}
+    return {
+        name: sum(seed.metrics[name] for seed in trial.seeds if name in seed.metrics)
+        / sum(name in seed.metrics for seed in trial.seeds)
+        for name in names
+    }
+
+
+def _composition(spec: IncentiveSpec | None) -> list[dict[str, Any]]:
+    if spec is None:
+        return []
+    counts = {item.archetype: item.count for item in spec.population}
+    return [
+        {
+            "archetype_id": archetype_id,
+            "count": counts[archetype_id],
+            **archetype.model_dump(mode="json"),
+        }
+        for archetype_id, archetype in spec.archetypes.items()
+        if archetype_id in counts
+    ]
 
 
 def _presentation(name: str, manifest: DomainPackManifest | None) -> ReportMetric:
@@ -440,7 +550,11 @@ def _run_findings(
     return findings[:7]
 
 
-def _mechanics(spec: IncentiveSpec | None, counts: dict[str, int]) -> MechanicsView:
+def _mechanics(
+    spec: IncentiveSpec | None,
+    counts: dict[str, int],
+    causal_flow: MechanicsFlow | None = None,
+) -> MechanicsView:
     if spec is None:
         return MechanicsView()
     transitions = []
@@ -473,7 +587,9 @@ def _mechanics(spec: IncentiveSpec | None, counts: dict[str, int]) -> MechanicsV
                 frequency=counts.get(item.id, 0),
             )
         )
-    return MechanicsView(states=list(spec.states.all), transitions=transitions)
+    return MechanicsView(
+        states=list(spec.states.all), transitions=transitions, causal_flow=causal_flow
+    )
 
 
 def _formula(name: str, spec: IncentiveSpec, seen: set[str] | None = None) -> str:

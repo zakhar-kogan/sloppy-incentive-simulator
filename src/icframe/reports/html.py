@@ -77,10 +77,12 @@ def render_html_report(
       html+=section('Trusted objectives',grid(v.objectives)); html+=section('Metrics',grid(v.metrics));
       html+=section('Metrics over time',`<div class="plots">${{v.metrics.map(plot).join('')}}</div>`);
       html+=section('Trusted constraints',table(['Metric','Value','Rule','Result'],v.constraints.map(x=>[x.label,fmt(x.value,x.format),`${{x.operator}} ${{fmt(x.threshold,x.format)}}`,{{html:`<span class="${{x.passed?'ok':'bad'}}">${{x.passed?'pass':'fail'}}</span>`}}])));
-      html+=section('Mechanics',table(['Transition','From','To','Effects','Enforcement','Run events'],v.mechanics.transitions.map(x=>[x.label,x.from_state,x.to_state,x.effects.join('; ')||'None',x.enforcement.join('; ')||'None',x.frequency])));
+      if(v.mechanics.causal_flow){{const f=v.mechanics.causal_flow,stages=Object.fromEntries(f.stages.map(x=>[x.id,x.label]));html+=section('Causal flow (explanatory)',`<p class="muted">${{esc(f.description)}} This is not execution order.</p>`+table(['Stage','Mechanism','Kind','Evidence'],f.nodes.map(x=>[stages[x.stage]||x.stage,x.label,x.kind,x.evidence.join('; ')])));}}
+      html+=section('Executable state machine',table(['Transition','From','To','Effects','Enforcement','Run events'],v.mechanics.transitions.map(x=>[x.label,x.from_state,x.to_state,x.effects.join('; ')||'None',x.enforcement.join('; ')||'None',x.frequency])));
       html+=section('Agents',table(['Agent','Archetype','Policy','Reward','Failures','Violations','Enforced'],v.agents.map(x=>[x.id,x.archetype,x.policy,fmt(x.reward),x.failed_decisions,x.violations,x.enforcement])));
       if(v.has_llm)html+=section('LLM usage',grid([{{label:'Attempts',value:v.llm.attempted,format:'integer'}},{{label:'Tokens',value:v.llm.total_tokens,format:'integer'}},{{label:'Estimated cost',value:v.llm.estimated_cost_usd,format:'currency'}},{{label:'Approximate p95 latency',value:v.llm.approximate_p95_ms,format:'integer'}}]));
     }}else{{
+      if(v.visualizations.length){{const p=v.visualizations[0];html+=section('Proxy versus trusted outcome',table(['Trial',p.x_metric,p.y_metric,p.color_metric||'Feasible'],v.trials.map(x=>[x.number,fmt(x.metrics[p.x_metric]),fmt(x.metrics[p.y_metric]),p.color_metric?fmt(x.metrics[p.color_metric]):(x.feasible?'yes':'no')])));}}
       html+=section('Trials',table(['Trial','Parameters','Objectives','Feasible','State'],v.trials.map(x=>[x.number,JSON.stringify(x.parameters),JSON.stringify(x.objectives),x.feasible?'yes':'no',x.state])));
       html+=section('Retained runs',v.retained_run_ids.length?`<ul>${{v.retained_run_ids.map(x=>`<li>${{esc(x)}}</li>`).join('')}}</ul>`:'<p class="muted">None retained.</p>');
     }}

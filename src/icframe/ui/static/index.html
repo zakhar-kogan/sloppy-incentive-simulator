@@ -17,6 +17,13 @@
     </header>
 
     <main>
+      <section id="startupError" class="startup-error hidden" role="alert">
+        <span class="eyebrow">Workbench unavailable</span>
+        <h1>Restart the ICFRAME server</h1>
+        <p id="startupErrorMessage"></p>
+        <pre>uv run icframe ui</pre>
+        <button id="retryStartup" type="button" class="primary">Retry after restart</button>
+      </section>
       <section id="setupWorkspace" class="workspace active" aria-label="Experiment setup">
         <div class="setup-layout">
           <aside class="setup-rail">
@@ -31,6 +38,14 @@
           </aside>
 
           <div class="setup-form">
+            <section class="form-band">
+              <div class="section-heading"><div><span class="eyebrow">Backend</span><h2>Execution profile</h2></div><span id="executionStatus" class="meta" role="status"></span></div>
+              <div class="grid-two">
+                <div><label for="executionProfile">Compute</label><select id="executionProfile"></select></div>
+                <div><label for="llmProfile">LLM connection</label><select id="llmProfile"><option value="">Browser / runtime settings</option></select></div>
+              </div>
+              <p class="hint">Profiles come from icframe.toml. Cloud credentials and MysteryBox secrets are never shown here.</p>
+            </section>
             <section class="form-band run-only">
               <div class="section-heading"><div><span class="eyebrow">Execution</span><h2>Experiment controls</h2></div></div>
               <div class="grid-two">
@@ -42,21 +57,25 @@
             <section class="form-band study-only hidden">
               <div class="section-heading"><div><span class="eyebrow">Optimization</span><h2>Study controls</h2></div></div>
               <div class="grid-four">
+                <div><label for="studyPreset">Study preset</label><select id="studyPreset"><option value="">Custom</option></select></div>
+                <div><label for="planner">Planner</label><select id="planner"><option value="random">Seeded random</option><option value="matrix">Matrix</option></select></div>
                 <div><label for="studyMode">Objective mode</label><select id="studyMode"><option value="single">Single objective</option><option value="pareto">Pareto</option></select></div>
                 <div><label for="trials">Trials</label><input id="trials" type="number" min="1" value="20"></div>
                 <div><label for="studySeeds">Evaluation seeds</label><input id="studySeeds" value="0"></div>
                 <div><label for="workers">Workers</label><input id="workers" type="number" min="1" max="16" value="4"></div>
+                <div><label for="plannerSeed">Planner seed</label><input id="plannerSeed" type="number" value="0"></div>
               </div>
             </section>
 
             <section id="llmSettings" class="form-band hidden">
               <div class="section-heading"><div><span class="eyebrow">Live policy</span><h2>LLM connection</h2></div><span id="llmCredentialState" class="meta"></span></div>
               <div class="grid-two">
-                <div><label for="llmModel">Model</label><input id="llmModel" placeholder="openai/gpt-4o-mini"></div>
+                <div><label for="llmModel">Default model</label><input id="llmModel" list="llmModels" placeholder="openai/gpt-4o-mini"><datalist id="llmModels"></datalist></div>
                 <div><label for="llmTemperature">Temperature</label><input id="llmTemperature" type="number" min="0" max="2" step="0.1" value="0"></div>
                 <div><label for="llmBaseUrl">OpenAI-compatible base URL</label><input id="llmBaseUrl" type="url"></div>
                 <div><label for="llmApiKey">API key</label><input id="llmApiKey" type="password" autocomplete="off"></div>
               </div>
+              <div class="inline-actions"><button id="checkModels" type="button" class="secondary">Check endpoint and load models</button><button id="applyLLMDefaults" type="button" class="secondary">Apply defaults to all LLM groups</button><button id="clearLLMDefaults" type="button" class="text-button">Clear saved defaults</button><span id="modelCheckState" class="meta" role="status"></span></div>
               <label for="llmSystemPrompt">System prompt</label><textarea id="llmSystemPrompt" rows="4"></textarea>
               <details><summary>Generated observation prompt</summary><pre id="llmPromptPreview"></pre></details>
               <div id="liveBudget" class="grid-two study-only hidden">
@@ -68,6 +87,13 @@
             <section class="form-band">
               <div class="section-heading"><div><span class="eyebrow">Domain controls</span><h2 id="parameterTitle">Parameters</h2></div><button id="resetParams" class="text-button">Reset</button></div>
               <div id="parameters" class="parameter-grid"></div>
+            </section>
+            <section class="form-band">
+              <div class="section-heading"><div><span class="eyebrow">Actors</span><h2>Agent populations</h2></div><div class="inline-actions"><button id="addPopulation" type="button" class="secondary">Add from template</button><button id="resetPopulation" type="button" class="text-button">Restore pack default</button></div></div>
+              <p class="hint">Each group uses a validated built-in policy. Q-learning here is the simulator's simple tabular policy, not a general RL trainer.</p>
+              <div id="populationTemplateChooser" class="template-chooser hidden"></div>
+              <div id="populationWarnings" class="configuration-warnings hidden" role="status"></div>
+              <div id="populationEditor" class="population-editor"></div>
             </section>
             <section id="objectivesSection" class="form-band study-only hidden"><div class="section-heading"><h2>Objectives</h2></div><div id="objectives" class="objective-grid"></div></section>
 
@@ -116,6 +142,6 @@
         </div>
       </section>
     </main>
-    <script type="module" src="/static/app.js"></script>
+    <script type="module" src="/static/app.js?v=0.5.0-3"></script>
   </body>
 </html>
