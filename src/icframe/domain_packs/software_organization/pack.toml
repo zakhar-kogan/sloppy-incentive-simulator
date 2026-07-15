@@ -8,9 +8,154 @@ spec_file = "spec.toml"
 single_objective = "trusted_score"
 pareto_objectives = ["customer_value", "code_quality", "exploit_rate", "governance_cost"]
 
+[[study.presets]]
+id = "goodhart_audit"
+label = "Goodhart pressure and audit"
+description = "Compare visible KPI pressure with trusted outcomes across population and audit settings."
+planner = "matrix"
+objectives = ["customer_value", "code_quality", "exploit_rate", "governance_cost"]
+seeds = [19]
+exclude_archetypes = ["llm_engineer"]
+
+[study.presets.parameter_matrix]
+proxy_agents = [1, 2, 4, 8]
+audit_probability = [0.0, 0.1, 0.3, 0.6, 1.0]
+
+[study.presets.visualization]
+x_metric = "observed_kpi"
+y_metric = "trusted_score"
+color_metric = "exploit_rate"
+
 [validation]
 golden_seeds = [19, 23, 31]
-report_metrics = ["trusted_score", "customer_value", "code_quality", "exploit_rate"]
+report_metrics = ["trusted_score", "observed_kpi", "customer_value", "code_quality", "exploit_rate"]
+
+[[population_templates]]
+id = "good_engineer"
+label = "Good engineer"
+description = "Prioritizes customer value, quality, truth, and maintainability."
+archetype = "good_engineer"
+count = 1
+
+[[population_templates]]
+id = "proxy_optimizer"
+label = "Proxy optimizer"
+description = "Learns against visible activity proxies and may exploit measurement gaps."
+archetype = "proxy_optimizer"
+count = 1
+
+[[population_templates]]
+id = "llm_engineer"
+label = "LLM engineer"
+description = "Uses the current LLM connection defaults with a domain-specific engineering prompt."
+archetype = "llm_engineer"
+count = 1
+
+[report.mechanics_flow]
+title = "Software organization causal flow"
+description = "Explanatory projection of declared work, reporting, audit, outcome, and sanction mechanics."
+
+[[report.mechanics_flow.stages]]
+id = "activity"
+label = "Agent activity"
+[[report.mechanics_flow.stages]]
+id = "signals"
+label = "Observed and latent effects"
+[[report.mechanics_flow.stages]]
+id = "review"
+label = "Governance review"
+[[report.mechanics_flow.stages]]
+id = "outcome"
+label = "Evaluated outcomes"
+
+[[report.mechanics_flow.nodes]]
+id = "engineering_work"
+label = "Engineering work"
+stage = "activity"
+kind = "action"
+description = "Ship features, refactor core code, or write tests."
+evidence = ["transition:ship_feature", "transition:refactor_core", "transition:write_tests"]
+[[report.mechanics_flow.nodes]]
+id = "progress_reporting"
+label = "Progress reporting"
+stage = "activity"
+kind = "action"
+description = "Meaningful, hollow, or misleading progress updates."
+evidence = ["transition:meaningful_update", "transition:hollow_update", "transition:misreport_progress"]
+[[report.mechanics_flow.nodes]]
+id = "token_activity"
+label = "Token activity"
+stage = "activity"
+kind = "action"
+description = "Generate visible activity that may increase maintenance burden."
+evidence = ["transition:token_bloat"]
+[[report.mechanics_flow.nodes]]
+id = "visible_signals"
+label = "Visible progress signals"
+stage = "signals"
+kind = "mechanism"
+evidence = ["outcome:observed.kpi", "outcome:observed.social_posts", "outcome:observed.token_usage"]
+[[report.mechanics_flow.nodes]]
+id = "latent_quality"
+label = "Latent product quality"
+stage = "signals"
+kind = "outcome"
+evidence = ["outcome:latent.customer_value", "outcome:latent.code_quality", "outcome:latent.maintenance_burden"]
+[[report.mechanics_flow.nodes]]
+id = "audit"
+label = "Misreport audit"
+stage = "review"
+kind = "enforcement"
+description = "Declared probabilistic audit and detection of misreported progress."
+evidence = ["enforcement:misreport_progress"]
+[[report.mechanics_flow.nodes]]
+id = "trusted_outcome"
+label = "Trusted outcome"
+stage = "outcome"
+kind = "outcome"
+evidence = ["metric:trusted_score", "metric:customer_value", "metric:code_quality"]
+[[report.mechanics_flow.nodes]]
+id = "sanctions"
+label = "Declared sanctions"
+stage = "outcome"
+kind = "enforcement"
+description = "Detected misreporting reduces payoff and trust while adding governance cost."
+evidence = ["enforcement:misreport_progress", "outcome:agent.payoff", "outcome:social.trust", "outcome:governance.cost"]
+
+[[report.mechanics_flow.edges]]
+source = "engineering_work"
+target = "visible_signals"
+evidence = ["transition:ship_feature", "transition:refactor_core", "transition:write_tests"]
+[[report.mechanics_flow.edges]]
+source = "engineering_work"
+target = "latent_quality"
+evidence = ["transition:ship_feature", "transition:refactor_core", "transition:write_tests"]
+[[report.mechanics_flow.edges]]
+source = "progress_reporting"
+target = "visible_signals"
+evidence = ["transition:meaningful_update", "transition:hollow_update", "transition:misreport_progress"]
+[[report.mechanics_flow.edges]]
+source = "token_activity"
+target = "visible_signals"
+evidence = ["transition:token_bloat"]
+[[report.mechanics_flow.edges]]
+source = "progress_reporting"
+target = "audit"
+label = "misreporting may be audited"
+evidence = ["enforcement:misreport_progress"]
+[[report.mechanics_flow.edges]]
+source = "visible_signals"
+target = "trusted_outcome"
+evidence = ["metric:trusted_score"]
+[[report.mechanics_flow.edges]]
+source = "latent_quality"
+target = "trusted_outcome"
+evidence = ["metric:trusted_score"]
+[[report.mechanics_flow.edges]]
+source = "audit"
+target = "sanctions"
+label = "when detected and enforced"
+evidence = ["enforcement:misreport_progress"]
 
 [report.metrics.trusted_score]
 label = "Trusted score"
@@ -21,6 +166,16 @@ desired_direction = "maximize"
 category = "outcome"
 headline_order = 0
 chart_group = "outcomes"
+
+[report.metrics.observed_kpi]
+label = "Observed KPI"
+description = "Visible activity score targeted by proxy-optimizing agents."
+unit = "points"
+format = "number"
+desired_direction = "maximize"
+category = "proxy"
+headline_order = 4
+chart_group = "risk"
 
 [report.metrics.customer_value]
 label = "Customer value"
@@ -60,7 +215,7 @@ metrics = ["trusted_score", "customer_value", "code_quality"]
 [[report.chart_groups]]
 id = "risk"
 label = "Proxy risk"
-metrics = ["exploit_rate"]
+metrics = ["observed_kpi", "exploit_rate"]
 
 [[parameters]]
 id = "steps"
@@ -73,6 +228,11 @@ minimum = 1
 maximum = 100000
 optimizable = false
 step = 1
+quick_values = [
+  { label = "Smoke", value = 5 },
+  { label = "Standard", value = 40 },
+  { label = "Thorough", value = 400 },
+]
 [parameters.target]
 entity = "experiment"
 field = ["steps"]

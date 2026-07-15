@@ -8,9 +8,125 @@ spec_file = "spec.toml"
 single_objective = "trusted_score"
 pareto_objectives = ["total_payoff", "harvest_rate"]
 
+[[study.presets]]
+id = "learning_rates"
+label = "Exploration and learning rates"
+description = "Compare short-term exploration with delayed-reward learning."
+planner = "matrix"
+objectives = ["total_payoff", "harvest_rate"]
+seeds = [41, 43, 47]
+
+[study.presets.parameter_matrix]
+epsilon = [0.0, 0.05, 0.15, 0.3, 0.6]
+q_learning_rate = [0.05, 0.1, 0.3, 0.6, 0.9]
+
+[study.presets.visualization]
+x_metric = "harvest_rate"
+y_metric = "total_payoff"
+color_metric = "trusted_score"
+
 [validation]
 golden_seeds = [11, 17, 29]
 report_metrics = ["trusted_score", "total_payoff", "harvest_rate"]
+
+[[population_templates]]
+id = "epsilon_learner"
+label = "Epsilon-greedy learner"
+description = "Balances random exploration with the current best action estimate."
+archetype = "epsilon_learner"
+count = 1
+[[population_templates]]
+id = "ucb_learner"
+label = "UCB learner"
+description = "Explores actions using an upper-confidence bound."
+archetype = "ucb_learner"
+count = 1
+[[population_templates]]
+id = "thompson_learner"
+label = "Thompson learner"
+description = "Samples uncertain action values from Gaussian estimates."
+archetype = "thompson_learner"
+count = 1
+[[population_templates]]
+id = "contextual_learner"
+label = "Contextual learner"
+description = "Learns action values from visible state and outcome features."
+archetype = "contextual_learner"
+count = 1
+[[population_templates]]
+id = "q_learner"
+label = "Simple Q-learner"
+description = "Learns tabular state-action values with delayed reward."
+archetype = "q_learner"
+count = 1
+
+[report.mechanics_flow]
+title = "Delayed-reward learning flow"
+description = "Explanatory projection of choices, immediate and delayed outcomes, and policy updates."
+[[report.mechanics_flow.stages]]
+id = "choice"
+label = "Policy choice"
+[[report.mechanics_flow.stages]]
+id = "reward"
+label = "Observed reward"
+[[report.mechanics_flow.stages]]
+id = "learning"
+label = "Policy update"
+[[report.mechanics_flow.nodes]]
+id = "invest"
+label = "Invest"
+stage = "choice"
+kind = "action"
+evidence = ["transition:invest"]
+[[report.mechanics_flow.nodes]]
+id = "resolve"
+label = "Cash out, harvest, or abandon"
+stage = "choice"
+kind = "action"
+evidence = ["transition:cash_out", "transition:harvest", "transition:abandon"]
+[[report.mechanics_flow.nodes]]
+id = "immediate_reward"
+label = "Immediate payoff"
+stage = "reward"
+kind = "outcome"
+evidence = ["outcome:agent.payoff"]
+[[report.mechanics_flow.nodes]]
+id = "long_term_value"
+label = "Latent long-term value"
+stage = "reward"
+kind = "outcome"
+evidence = ["outcome:latent.long_term_value"]
+[[report.mechanics_flow.nodes]]
+id = "policy_update"
+label = "Bandit or Q-value update"
+stage = "learning"
+kind = "learning"
+evidence = ["metric:total_payoff", "transition:invest", "transition:harvest"]
+[[report.mechanics_flow.edges]]
+source = "invest"
+target = "immediate_reward"
+label = "setup cost"
+evidence = ["transition:invest"]
+[[report.mechanics_flow.edges]]
+source = "invest"
+target = "long_term_value"
+evidence = ["transition:invest"]
+[[report.mechanics_flow.edges]]
+source = "resolve"
+target = "immediate_reward"
+evidence = ["transition:cash_out", "transition:harvest", "transition:abandon"]
+[[report.mechanics_flow.edges]]
+source = "resolve"
+target = "long_term_value"
+evidence = ["transition:cash_out", "transition:harvest", "transition:abandon"]
+[[report.mechanics_flow.edges]]
+source = "immediate_reward"
+target = "policy_update"
+evidence = ["metric:total_payoff"]
+[[report.mechanics_flow.edges]]
+source = "long_term_value"
+target = "policy_update"
+evidence = ["outcome:latent.long_term_value"]
 
 [report.metrics.trusted_score]
 label = "Trusted score"
@@ -58,6 +174,11 @@ minimum = 10
 maximum = 100000
 optimizable = false
 step = 1
+quick_values = [
+  { label = "Smoke", value = 20 },
+  { label = "Standard", value = 200 },
+  { label = "Thorough", value = 2000 },
+]
 [parameters.target]
 entity = "experiment"
 field = ["steps"]

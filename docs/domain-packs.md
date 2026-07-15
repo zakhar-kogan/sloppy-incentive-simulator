@@ -19,6 +19,14 @@ and cannot enter a search space.
 Each archetype may appear only once in an IncentiveSpec `population` list. Set its total
 agent count on that single entry rather than splitting an archetype across entries.
 
+Pack manifests may declare `population_templates` that reference canonical archetypes. The UI
+expands these into complete domain-aware groups, preserving roles, visibility, reward weights,
+policy configuration, initial resources, and LLM prompts.
+
+`report.mechanics_flow` is an optional explanatory graph. Every node and edge cites declared
+actions, transitions, outcomes, metrics, hook configuration, or enforcement. It does not
+change execution; the Mechanics state-machine view remains the canonical runtime projection.
+
 ## Reference Packs
 
 - `public_goods`: parallel shared resources, externalities, sanctions, collusion pressure, and an `after_commit` public-return hook.
