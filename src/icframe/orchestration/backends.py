@@ -157,6 +157,8 @@ class NebiusJobsBackend:
         )
         if self.profile.subnet_id:
             spec_values["subnet_id"] = self.profile.subnet_id
+        if self.profile.public_ip:
+            spec_values["public_ip"] = True
         spec = JobSpec(**spec_values)
         operation = await service.create(
             CreateJobRequest(

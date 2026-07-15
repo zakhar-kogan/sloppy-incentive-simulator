@@ -12,6 +12,13 @@ def test_profiles_have_safe_defaults_and_redact_secret_values(tmp_path) -> None:
 type = "local"
 workers = 2
 
+[execution.remote]
+type = "nebius_jobs"
+parent_id = "project-test"
+image = "registry.test/worker@sha256:digest"
+bucket = "artifacts"
+public_ip = true
+
 [llm.custom]
 type = "openai_compatible"
 base_url = "https://example.test/v1"
@@ -23,6 +30,7 @@ api_key_env = "CUSTOM_API_KEY"
     payload = profiles.public_payload({"CUSTOM_API_KEY": "do-not-leak"})
 
     assert profiles.execution_profile("local").workers == 2
+    assert profiles.execution_profile("remote").public_ip is True
     assert profiles.llm_profile("nebius-token-factory").base_url == TOKEN_FACTORY_BASE_URL
     assert payload["llm"]["custom"]["has_api_key"] is True
     assert "do-not-leak" not in str(payload)

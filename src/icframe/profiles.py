@@ -26,6 +26,7 @@ class ExecutionProfile(ICFrameModel):
     image: str | None = None
     bucket: str | None = None
     subnet_id: str | None = None
+    public_ip: bool = False
     platform: str = "cpu-d3"
     preset: str = "4vcpu-16gb"
     shard_size: int = Field(default=32, ge=1)

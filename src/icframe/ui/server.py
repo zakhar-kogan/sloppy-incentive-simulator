@@ -363,7 +363,7 @@ class JobManager:
                 cancel_event=job.cancel_event,
                 progress_callback=lambda **values: self._progress(job, **values),
             )
-            summary = run_experiment(
+            run_experiment(
                 pack,
                 RunConfig(
                     run_id=job.id,
@@ -404,7 +404,7 @@ class JobManager:
                 )
             allow_live = bool(payload.get("allow_live_llm", False))
             config = self._study_config(job, pack, payload, mode, objectives, allow_live)
-            summary = run_study(
+            run_study(
                 pack,
                 config,
                 llm_client=self._llm_client(payload),
