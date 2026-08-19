@@ -78,6 +78,6 @@ All metrics consume every event online regardless of retention. Policy memory is
 - `icframe[analytics]`: NetworkX interaction analysis over retained events
 - `icframe[nebius]`: official Nebius SDK and Object Storage transport
 
-Mesa is not part of v0.4. MARL training algorithms remain outside ICFRAME.
+Mesa is not part of ICFRAME. MARL training algorithms remain outside ICFRAME.
 Agno is not a core runtime: a future tool-using agent integration may implement the
 existing `Policy` contract without replacing simulation scheduling or state.

@@ -9,7 +9,7 @@ The primary user is an experiment author working repeatedly with domain packs, s
 retention profiles, and bounded studies. Hackathon reviewers are a secondary audience who
 should be able to understand a completed artifact without learning internal identifiers.
 
-## v0.4.1 Promise
+## v0.5 Promise
 
 - Setup and Results are independent workspaces. Inspecting history never changes an
   experiment configuration.

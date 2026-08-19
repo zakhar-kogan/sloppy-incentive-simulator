@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="972" height="392" viewBox="0 0 972 392" font-family="Avenir Next,Avenir,Segoe UI,sans-serif">
+<rect width="972" height="392" fill="#ffffff"/>
+<text x="62" y="30" fill="#17201e" font-size="14" font-weight="700">Exploitation is flat</text>
+<text x="62" y="46" fill="#66706d" font-size="11">exploit rate</text>
+<line x1="62" y1="302.0" x2="442" y2="302.0" stroke="#d3dad5" stroke-width="1"/>
+<text x="54" y="306.0" fill="#66706d" font-size="10" text-anchor="end">0.00</text>
+<line x1="62" y1="239.5" x2="442" y2="239.5" stroke="#d3dad5" stroke-width="1"/>
+<text x="54" y="243.5" fill="#66706d" font-size="10" text-anchor="end">0.25</text>
+<line x1="62" y1="177.0" x2="442" y2="177.0" stroke="#d3dad5" stroke-width="1"/>
+<text x="54" y="181.0" fill="#66706d" font-size="10" text-anchor="end">0.50</text>
+<line x1="62" y1="114.5" x2="442" y2="114.5" stroke="#d3dad5" stroke-width="1"/>
+<text x="54" y="118.5" fill="#66706d" font-size="10" text-anchor="end">0.75</text>
+<line x1="62" y1="52.0" x2="442" y2="52.0" stroke="#d3dad5" stroke-width="1"/>
+<text x="54" y="56.0" fill="#66706d" font-size="10" text-anchor="end">1.00</text>
+<text x="62.0" y="320" fill="#66706d" font-size="10" text-anchor="middle">0</text>
+<text x="100.0" y="320" fill="#66706d" font-size="10" text-anchor="middle">0.1</text>
+<text x="176.0" y="320" fill="#66706d" font-size="10" text-anchor="middle">0.3</text>
+<text x="290.0" y="320" fill="#66706d" font-size="10" text-anchor="middle">0.6</text>
+<text x="442.0" y="320" fill="#66706d" font-size="10" text-anchor="middle">1</text>
+<text x="252.0" y="340" fill="#66706d" font-size="11" text-anchor="middle">audit probability</text>
+<path d="M62.0,188.2 L100.0,189.5 L176.0,185.1 L290.0,187.0 L442.0,187.0" fill="none" stroke="#245d8f" stroke-width="2.2"/>
+<circle cx="62.0" cy="188.2" r="3" fill="#245d8f"/>
+<circle cx="100.0" cy="189.5" r="3" fill="#245d8f"/>
+<circle cx="176.0" cy="185.1" r="3" fill="#245d8f"/>
+<circle cx="290.0" cy="187.0" r="3" fill="#245d8f"/>
+<circle cx="442.0" cy="187.0" r="3" fill="#245d8f"/>
+<text x="448.0" y="191.0" fill="#245d8f" font-size="10" font-weight="700">1</text>
+<path d="M62.0,149.5 L100.0,148.2 L176.0,147.8 L290.0,146.6 L442.0,146.6" fill="none" stroke="#176b4d" stroke-width="2.2"/>
+<circle cx="62.0" cy="149.5" r="3" fill="#176b4d"/>
+<circle cx="100.0" cy="148.2" r="3" fill="#176b4d"/>
+<circle cx="176.0" cy="147.8" r="3" fill="#176b4d"/>
+<circle cx="290.0" cy="146.6" r="3" fill="#176b4d"/>
+<circle cx="442.0" cy="146.6" r="3" fill="#176b4d"/>
+<text x="448.0" y="150.6" fill="#176b4d" font-size="10" font-weight="700">2</text>
+<path d="M62.0,112.2 L100.0,114.5 L176.0,113.0 L290.0,114.5 L442.0,115.8" fill="none" stroke="#b8860b" stroke-width="2.2"/>
+<circle cx="62.0" cy="112.2" r="3" fill="#b8860b"/>
+<circle cx="100.0" cy="114.5" r="3" fill="#b8860b"/>
+<circle cx="176.0" cy="113.0" r="3" fill="#b8860b"/>
+<circle cx="290.0" cy="114.5" r="3" fill="#b8860b"/>
+<circle cx="442.0" cy="115.8" r="3" fill="#b8860b"/>
+<text x="448.0" y="119.8" fill="#b8860b" font-size="10" font-weight="700">4</text>
+<path d="M62.0,93.8 L100.0,95.1 L176.0,94.6 L290.0,96.0 L442.0,95.1" fill="none" stroke="#b33b2e" stroke-width="2.2"/>
+<circle cx="62.0" cy="93.8" r="3" fill="#b33b2e"/>
+<circle cx="100.0" cy="95.1" r="3" fill="#b33b2e"/>
+<circle cx="176.0" cy="94.6" r="3" fill="#b33b2e"/>
+<circle cx="290.0" cy="96.0" r="3" fill="#b33b2e"/>
+<circle cx="442.0" cy="95.1" r="3" fill="#b33b2e"/>
+<text x="448.0" y="99.1" fill="#b33b2e" font-size="10" font-weight="700">8</text>
+<text x="542" y="30" fill="#17201e" font-size="14" font-weight="700">Audit cost is not</text>
+<text x="542" y="46" fill="#66706d" font-size="11">governance cost</text>
+<line x1="542" y1="302.0" x2="922" y2="302.0" stroke="#d3dad5" stroke-width="1"/>
+<text x="534" y="306.0" fill="#66706d" font-size="10" text-anchor="end">0</text>
+<line x1="542" y1="239.5" x2="922" y2="239.5" stroke="#d3dad5" stroke-width="1"/>
+<text x="534" y="243.5" fill="#66706d" font-size="10" text-anchor="end">30</text>
+<line x1="542" y1="177.0" x2="922" y2="177.0" stroke="#d3dad5" stroke-width="1"/>
+<text x="534" y="181.0" fill="#66706d" font-size="10" text-anchor="end">60</text>
+<line x1="542" y1="114.5" x2="922" y2="114.5" stroke="#d3dad5" stroke-width="1"/>
+<text x="534" y="118.5" fill="#66706d" font-size="10" text-anchor="end">90</text>
+<line x1="542" y1="52.0" x2="922" y2="52.0" stroke="#d3dad5" stroke-width="1"/>
+<text x="534" y="56.0" fill="#66706d" font-size="10" text-anchor="end">120</text>
+<text x="542.0" y="320" fill="#66706d" font-size="10" text-anchor="middle">0</text>
+<text x="580.0" y="320" fill="#66706d" font-size="10" text-anchor="middle">0.1</text>
+<text x="656.0" y="320" fill="#66706d" font-size="10" text-anchor="middle">0.3</text>
+<text x="770.0" y="320" fill="#66706d" font-size="10" text-anchor="middle">0.6</text>
+<text x="922.0" y="320" fill="#66706d" font-size="10" text-anchor="middle">1</text>
+<text x="732.0" y="340" fill="#66706d" font-size="11" text-anchor="middle">audit probability</text>
+<path d="M542.0,302.0 L580.0,299.3 L656.0,292.0 L770.0,284.9 L922.0,272.8" fill="none" stroke="#245d8f" stroke-width="2.2"/>
+<circle cx="542.0" cy="302.0" r="3" fill="#245d8f"/>
+<circle cx="580.0" cy="299.3" r="3" fill="#245d8f"/>
+<circle cx="656.0" cy="292.0" r="3" fill="#245d8f"/>
+<circle cx="770.0" cy="284.9" r="3" fill="#245d8f"/>
+<circle cx="922.0" cy="272.8" r="3" fill="#245d8f"/>
+<text x="928.0" y="276.8" fill="#245d8f" font-size="10" font-weight="700">1</text>
+<path d="M542.0,302.0 L580.0,296.0 L656.0,282.8 L770.0,266.2 L922.0,240.5" fill="none" stroke="#176b4d" stroke-width="2.2"/>
+<circle cx="542.0" cy="302.0" r="3" fill="#176b4d"/>
+<circle cx="580.0" cy="296.0" r="3" fill="#176b4d"/>
+<circle cx="656.0" cy="282.8" r="3" fill="#176b4d"/>
+<circle cx="770.0" cy="266.2" r="3" fill="#176b4d"/>
+<circle cx="922.0" cy="240.5" r="3" fill="#176b4d"/>
+<text x="928.0" y="244.5" fill="#176b4d" font-size="10" font-weight="700">2</text>
+<path d="M542.0,302.0 L580.0,286.8 L656.0,263.2 L770.0,233.9 L922.0,183.9" fill="none" stroke="#b8860b" stroke-width="2.2"/>
+<circle cx="542.0" cy="302.0" r="3" fill="#b8860b"/>
+<circle cx="580.0" cy="286.8" r="3" fill="#b8860b"/>
+<circle cx="656.0" cy="263.2" r="3" fill="#b8860b"/>
+<circle cx="770.0" cy="233.9" r="3" fill="#b8860b"/>
+<circle cx="922.0" cy="183.9" r="3" fill="#b8860b"/>
+<text x="928.0" y="187.9" fill="#b8860b" font-size="10" font-weight="700">4</text>
+<path d="M542.0,302.0 L580.0,278.5 L656.0,228.9 L770.0,153.2 L922.0,61.8" fill="none" stroke="#b33b2e" stroke-width="2.2"/>
+<circle cx="542.0" cy="302.0" r="3" fill="#b33b2e"/>
+<circle cx="580.0" cy="278.5" r="3" fill="#b33b2e"/>
+<circle cx="656.0" cy="228.9" r="3" fill="#b33b2e"/>
+<circle cx="770.0" cy="153.2" r="3" fill="#b33b2e"/>
+<circle cx="922.0" cy="61.8" r="3" fill="#b33b2e"/>
+<text x="928.0" y="65.8" fill="#b33b2e" font-size="10" font-weight="700">8</text>
+<text x="62" y="374" fill="#66706d" font-size="11">line labels = proxy agents; mean of 5 seeds (19, 23, 41, 101, 777)</text>
+</svg>
